@@ -223,6 +223,7 @@ async function enterApp() {
       id: data.user.id,
       email: data.user.email,
       name: displayName(data.user.email),
+      slug: slugFromEmail(data.user.email),
     };
   }
   await refresh();
@@ -246,28 +247,34 @@ el.tabButtons.forEach((btn) => {
 // ─── Daten laden & rendern ─────────────────────────────────────────────────
 
 async function refresh() {
-  const [techRes, focusRes, entryRes] = await Promise.all([
+  const [techRes, focusRes, entryRes, secRes] = await Promise.all([
     supa.from("technique_stats").select("id, name, usage_count, last_used_at"),
     supa.from("focus_area_stats").select("id, name, usage_count, last_used_at"),
     supa.from("entries")
       .select("id, comment, created_at, user_id, entry_techniques(technique_id), entry_focus_areas(focus_area_id)")
       .order("created_at", { ascending: false })
       .limit(16),
+    supa.from("sections").select("slot, title, content, updated_at, updated_by").order("slot"),
   ]);
 
   if (techRes.error || focusRes.error || entryRes.error) {
     console.error(techRes.error || focusRes.error || entryRes.error);
     return;
   }
+  // Sections dürfen fehlen (Schema evtl. noch nicht ausgeführt) — dann bleibt
+  // das Dashboard nur leer, statt die ganze App zu blockieren.
+  if (secRes.error) console.warn("sections nicht geladen:", secRes.error.message);
 
   techniques      = sortStats(techRes.data);
   focusAreas      = sortStats(focusRes.data);
   historyEntries  = entryRes.data;
   historyIndex    = 0;
+  sections        = secRes.data || [];
 
   renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
   renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
   renderHistory();
+  renderDashboard();
   refreshIcons();
 }
 
@@ -697,6 +704,456 @@ async function deleteCategory(item, kind) {
   else                 selectedFocus.delete(item.id);
   showToast(`„${item.name}" gelöscht.`);
   await refresh();
+}
+
+// ─── Dashboard: User-Farben ────────────────────────────────────────────────
+// Farbe pro Nutzer wird aus dem E-Mail-Local-Part abgeleitet, damit sie
+// deterministisch und ohne DB-Lookup bleibt. Bekannte Trainer sind fix
+// gemappt; alles darüber hinaus fällt auf eine kleine Fallback-Palette
+// zurück (Hash über den Slug), damit auch spätere Nutzer eine feste,
+// unverwechselbare Farbe bekommen.
+
+const USER_COLORS = {
+  sihinghauke:  "#1a2744",   // Navy — SihingHauke
+  sihingsoenke: "#c49a2a",   // Gold — SihingSoenke
+};
+const FALLBACK_COLORS = [
+  "#0f7c8a",   // Teal
+  "#4a7c59",   // Forest
+  "#6b4c93",   // Purple
+  "#b23a48",   // Crimson
+  "#c96b1f",   // Rust
+];
+
+function slugFromEmail(email) {
+  return (email || "").split("@")[0].toLowerCase();
+}
+
+function colorForUser(slug) {
+  if (!slug) return "transparent";
+  if (USER_COLORS[slug]) return USER_COLORS[slug];
+  let h = 0;
+  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) >>> 0;
+  return FALLBACK_COLORS[h % FALLBACK_COLORS.length];
+}
+
+// ─── Dashboard: State + DOM ────────────────────────────────────────────────
+
+let sections = [];  // [{slot, title, content, updated_by, updated_at}]
+
+const dashEl = {
+  cards:        $("section-cards"),
+  editorModal:  $("editor-modal"),
+  editorTitle:  $("editor-title"),
+  editor:       $("editor"),
+  editorSave:   $("editor-save"),
+  editorToolbar: document.querySelector(".editor-toolbar"),
+};
+
+let editorContext = null;  // { slot, originalBlocks: Map<text, authorSlug> }
+
+// ─── Dashboard: Rendering ──────────────────────────────────────────────────
+
+function renderDashboard() {
+  dashEl.cards.innerHTML = "";
+  for (const s of sections) {
+    const card = document.createElement("article");
+    card.className = "section-card";
+    card.dataset.slot = String(s.slot);
+    card.innerHTML = `
+      <header class="section-card-head">
+        <span class="section-title-text"></span>
+        <button type="button" class="section-rename" aria-label="Umbenennen">
+          <i data-lucide="pencil"></i>
+        </button>
+      </header>
+      <div class="section-content rich-content" role="button" tabindex="0"
+           aria-label="Bearbeiten"></div>
+    `;
+    card.querySelector(".section-title-text").textContent = s.title;
+
+    const content = card.querySelector(".section-content");
+    renderRichContentInto(content, s.content);
+
+    // Klick auf die Karte öffnet den Editor — es sei denn, der Klick landet
+    // auf einer Checkbox (die wird direkt umgeschaltet und gespeichert).
+    content.addEventListener("click", (e) => {
+      const cb = e.target.closest(".checkbox");
+      if (cb) {
+        e.stopPropagation();
+        toggleCheckboxAndSave(cb, s.slot, content);
+        return;
+      }
+      openEditor(s.slot);
+    });
+    content.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openEditor(s.slot);
+      }
+    });
+
+    card.querySelector(".section-rename").addEventListener("click", (e) => {
+      e.stopPropagation();
+      startRename(card, s);
+    });
+
+    dashEl.cards.appendChild(card);
+  }
+  refreshIcons();
+}
+
+function renderRichContentInto(container, html) {
+  container.innerHTML = sanitizeHtml(html || "");
+
+  const isEmpty = !container.textContent.trim() && !container.querySelector("li");
+  container.classList.toggle("is-empty", isEmpty);
+
+  // Autorenfarbe pro Block als CSS-Variable setzen
+  container.querySelectorAll("[data-author]").forEach((node) => {
+    node.style.setProperty("--author", colorForUser(node.getAttribute("data-author")));
+  });
+
+  // Sicherstellen, dass jede Checkliste ein sichtbares Kästchen hat und einen
+  // Zustand kennt — falls das gespeicherte HTML das mal verloren haben sollte.
+  container.querySelectorAll("ul.checklist > li").forEach((li) => {
+    if (!li.hasAttribute("data-check")) li.setAttribute("data-check", "false");
+    if (!li.querySelector(":scope > .checkbox")) {
+      const cb = document.createElement("span");
+      cb.className = "checkbox";
+      li.insertBefore(cb, li.firstChild);
+    }
+  });
+}
+
+// ─── Dashboard: Titel umbenennen (inline) ──────────────────────────────────
+
+function startRename(card, section) {
+  const head = card.querySelector(".section-card-head");
+  const span = head.querySelector(".section-title-text");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "section-title-input";
+  input.value = section.title;
+  input.maxLength = 40;
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const newTitle = input.value.trim();
+    input.replaceWith(span);
+    if (!save || !newTitle || newTitle === section.title) return;
+    const { error } = await supa.from("sections")
+      .update({ title: newTitle })
+      .eq("slot", section.slot);
+    if (error) {
+      showToast(`Umbenennen fehlgeschlagen: ${error.message}`, 3500);
+      return;
+    }
+    section.title = newTitle;
+    span.textContent = newTitle;
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter")  { e.preventDefault(); finish(true);  }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+// ─── Dashboard: Editor öffnen / schließen / speichern ─────────────────────
+
+function openEditor(slot) {
+  const s = sections.find((x) => x.slot === slot);
+  if (!s) return;
+  dashEl.editorTitle.textContent = s.title;
+  renderRichContentInto(dashEl.editor, s.content);
+  // Checkboxen im Editor als contenteditable="false" markieren, damit sie
+  // beim Tippen nicht kaputtgehen.
+  dashEl.editor.querySelectorAll(".checkbox").forEach((cb) => {
+    cb.setAttribute("contenteditable", "false");
+  });
+  editorContext = { slot, originalBlocks: extractBlocks(s.content) };
+  dashEl.editorModal.hidden = false;
+  refreshIcons();
+  setTimeout(() => dashEl.editor.focus(), 50);
+}
+
+function closeEditor() {
+  dashEl.editorModal.hidden = true;
+  dashEl.editor.innerHTML = "";
+  editorContext = null;
+}
+
+dashEl.editorModal.querySelectorAll("[data-editor-close]").forEach((n) => {
+  n.addEventListener("click", closeEditor);
+});
+
+// Toolbar
+dashEl.editorToolbar.addEventListener("mousedown", (e) => {
+  // Verhindert, dass ein Klick auf einen Button den Fokus aus dem Editor
+  // herauszieht — sonst geht die Selektion verloren und execCommand hat
+  // nichts, worauf es angewendet werden kann.
+  if (e.target.closest("button")) e.preventDefault();
+});
+
+dashEl.editorToolbar.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-cmd]");
+  if (!btn) return;
+  dashEl.editor.focus();
+  // Tag-basiertes Markup erzwingen (sonst spuckt Chrome <span style="…">
+  // aus, was der Sanitizer bei der nächsten Runde wieder rauswirft).
+  try { document.execCommand("styleWithCSS", false, false); } catch (_) {}
+  switch (btn.dataset.cmd) {
+    case "bold":   document.execCommand("bold");   break;
+    case "italic": document.execCommand("italic"); break;
+    case "ul":     document.execCommand("insertUnorderedList"); break;
+    case "ol":     document.execCommand("insertOrderedList");   break;
+    case "check":  makeChecklistAtCursor(); break;
+  }
+});
+
+function makeChecklistAtCursor() {
+  document.execCommand("insertUnorderedList");
+  // Der frisch eingefügten UL die Checklisten-Klasse verpassen und in jeder
+  // LI eine leere Checkbox platzieren.
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return;
+  let node = sel.anchorNode;
+  while (node && node.nodeName !== "UL" && node !== dashEl.editor) node = node.parentNode;
+  if (!node || node.nodeName !== "UL") return;
+  node.classList.add("checklist");
+  node.querySelectorAll(":scope > li").forEach((li) => {
+    if (!li.hasAttribute("data-check")) li.setAttribute("data-check", "false");
+    if (!li.querySelector(":scope > .checkbox")) {
+      const cb = document.createElement("span");
+      cb.className = "checkbox";
+      cb.setAttribute("contenteditable", "false");
+      li.insertBefore(cb, li.firstChild);
+    }
+  });
+}
+
+// Klick auf eine Checkbox im Editor: nur den Zustand toggeln, nicht speichern
+// (Speichern passiert erst beim Klick auf „Fertig").
+dashEl.editor.addEventListener("click", (e) => {
+  const cb = e.target.closest(".checkbox");
+  if (!cb) return;
+  const li = cb.closest("li[data-check]");
+  if (!li) return;
+  li.setAttribute("data-check", li.getAttribute("data-check") === "true" ? "false" : "true");
+});
+
+// Paste als Plaintext — verhindert, dass Word/Notes-HTML in unser Datenmodell
+// einsickert. Sanitize würde es zwar filtern, aber so ist das UX vorhersehbar.
+dashEl.editor.addEventListener("paste", (e) => {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+  document.execCommand("insertText", false, text);
+});
+
+dashEl.editorSave.addEventListener("click", async () => {
+  if (!editorContext) return;
+  const { slot, originalBlocks } = editorContext;
+  dashEl.editorSave.disabled = true;
+  const mySlug = currentUser ? currentUser.slug : "";
+  const attributed = attributeBlocks(dashEl.editor.innerHTML, originalBlocks, mySlug);
+  const err = await persistSection(slot, attributed);
+  dashEl.editorSave.disabled = false;
+  if (err) return;
+  closeEditor();
+});
+
+// Checkbox-Toggle in der Read-Ansicht: Zustand flippen und direkt speichern,
+// ohne die Blöcke neu zu attributieren (der Autor eines Punkts soll durch
+// bloßes Abhaken nicht wechseln).
+async function toggleCheckboxAndSave(checkbox, slot, container) {
+  const li = checkbox.closest("li[data-check]");
+  if (!li) return;
+  li.setAttribute("data-check", li.getAttribute("data-check") === "true" ? "false" : "true");
+  await persistSection(slot, container.innerHTML);
+}
+
+async function persistSection(slot, html) {
+  const clean = sanitizeHtml(html);
+  const { error } = await supa.from("sections")
+    .update({
+      content: clean,
+      updated_by: currentUser ? currentUser.id : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("slot", slot);
+  if (error) {
+    showToast(`Speichern fehlgeschlagen: ${error.message}`, 3500);
+    return error;
+  }
+  const s = sections.find((x) => x.slot === slot);
+  if (s) s.content = clean;
+  const card = dashEl.cards.querySelector(`.section-card[data-slot="${slot}"]`);
+  if (card) {
+    renderRichContentInto(card.querySelector(".section-content"), clean);
+    refreshIcons();
+  }
+  return null;
+}
+
+// ─── Dashboard: Block-Autorenschaft ────────────────────────────────────────
+// Auf Block-Ebene (Absatz / Listenpunkt) merken wir uns per data-author, wer
+// den Text zuletzt geschrieben hat. Heuristik beim Speichern:
+//   • Wenn der Text eines Blocks unverändert in der Ursprungs-Map vorkommt,
+//     bleibt der ursprüngliche Autor erhalten.
+//   • Alles andere (neu, editiert, verschoben mit anderem Text) wird dem
+//     aktuellen Nutzer zugeschrieben.
+// Kollisionen bei identischem Text (mehrere Blöcke mit gleichem Inhalt) sind
+// bewusst egal — sie hätten sowieso den gleichen Autor.
+
+function extractBlocks(html) {
+  const map = new Map();
+  const template = document.createElement("template");
+  template.innerHTML = html || "";
+  walkBlocks(template.content, (block) => {
+    const text = block.textContent.trim();
+    const author = block.getAttribute("data-author");
+    if (text && author && !map.has(text)) map.set(text, author);
+  });
+  return map;
+}
+
+function attributeBlocks(html, originalMap, currentSlug) {
+  const template = document.createElement("template");
+  template.innerHTML = html || "";
+  normalizeToBlocks(template.content);
+  walkBlocks(template.content, (block) => {
+    const text = block.textContent.trim();
+    if (!text) { block.removeAttribute("data-author"); return; }
+    const original = originalMap.get(text);
+    block.setAttribute("data-author", original || currentSlug || "");
+  });
+  return template.innerHTML;
+}
+
+// Ruft `visit` für jeden „Block" auf: Top-Level-Elemente außer Listen, sowie
+// jedes <li> innerhalb einer Liste (rekursiv).
+function walkBlocks(root, visit) {
+  for (const child of Array.from(root.children)) {
+    if (child.tagName === "UL" || child.tagName === "OL") {
+      for (const li of Array.from(child.children)) visit(li);
+    } else {
+      visit(child);
+    }
+  }
+}
+
+// Rohes contenteditable-HTML in eine klare Block-Struktur bringen: nackte
+// Textknoten und Inline-Elemente werden in <p> verpackt, <br> zwischen
+// solchen Runs zerlegt die Absätze. Firefox liefert sonst „foo<br>bar"
+// statt „<p>foo</p><p>bar</p>", was uns die Block-Attribution kaputt macht.
+const INLINE_TAGS  = new Set(["STRONG", "B", "EM", "I", "U", "SPAN", "A", "CODE"]);
+const BLOCK_TAGS   = new Set(["P", "DIV", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE"]);
+
+function normalizeToBlocks(root) {
+  const kids = Array.from(root.childNodes);
+  let currentP = null;
+  for (const kid of kids) {
+    if (kid.nodeType === Node.ELEMENT_NODE && kid.tagName === "BR") {
+      // <br> auf Top-Level schließt den aktuellen Absatz und wird verworfen.
+      currentP = null;
+      kid.remove();
+      continue;
+    }
+    if (kid.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has(kid.tagName)) {
+      currentP = null;
+      continue;
+    }
+    if (kid.nodeType === Node.TEXT_NODE && !kid.textContent.trim()) {
+      // Reines Whitespace zwischen Blöcken ignorieren.
+      continue;
+    }
+    if (kid.nodeType === Node.ELEMENT_NODE && !INLINE_TAGS.has(kid.tagName)) {
+      // Unbekanntes Element: nicht anpacken, aktuelles <p> schließen.
+      currentP = null;
+      continue;
+    }
+    if (!currentP) {
+      currentP = document.createElement("p");
+      root.insertBefore(currentP, kid);
+    }
+    currentP.appendChild(kid);
+  }
+}
+
+// ─── Dashboard: HTML-Sanitizer ─────────────────────────────────────────────
+// Whitelist-basierter Filter. Der Editor speist uns fast beliebiges HTML ein
+// (execCommand, Paste), deshalb filtern wir sowohl beim Speichern als auch
+// beim Rendern.
+
+const ALLOWED_TAGS = new Set([
+  "P", "BR", "STRONG", "B", "EM", "I", "U",
+  "UL", "OL", "LI", "DIV", "SPAN", "H3",
+]);
+
+function isAttrAllowed(tag, attr) {
+  if (attr === "data-author") return true;
+  if (tag === "LI"   && attr === "data-check") return true;
+  if (tag === "UL"   && attr === "class")      return true;
+  if (tag === "SPAN" && attr === "class")      return true;
+  return false;
+}
+
+function isClassValid(tag, cls) {
+  if (tag === "UL")   return cls === "checklist";
+  if (tag === "SPAN") return cls === "checkbox";
+  return false;
+}
+
+function sanitizeHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html || "";
+  cleanContainer(template.content);
+  return template.innerHTML;
+}
+
+function cleanContainer(container) {
+  const kids = Array.from(container.childNodes);
+  for (const kid of kids) {
+    if (kid.nodeType === Node.TEXT_NODE) continue;
+    if (kid.nodeType !== Node.ELEMENT_NODE) { kid.remove(); continue; }
+
+    // Legacy-Formatierung normalisieren
+    let tag = kid.tagName;
+    if (tag === "B") tag = "STRONG";
+    if (tag === "I") tag = "EM";
+
+    if (!ALLOWED_TAGS.has(tag)) {
+      // Unwrap: Kinder an Ort und Stelle übernehmen, dann Element entfernen.
+      while (kid.firstChild) kid.parentNode.insertBefore(kid.firstChild, kid);
+      kid.remove();
+      // Kids-Snapshot ist jetzt stale; einmal von vorn.
+      cleanContainer(container);
+      return;
+    }
+
+    if (tag !== kid.tagName) {
+      const rep = document.createElement(tag.toLowerCase());
+      for (const a of Array.from(kid.attributes)) {
+        if (isAttrAllowed(tag, a.name)) rep.setAttribute(a.name, a.value);
+      }
+      while (kid.firstChild) rep.appendChild(kid.firstChild);
+      kid.parentNode.replaceChild(rep, kid);
+      cleanContainer(rep);
+      continue;
+    }
+
+    for (const a of Array.from(kid.attributes)) {
+      if (!isAttrAllowed(tag, a.name)) { kid.removeAttribute(a.name); continue; }
+      if (a.name === "class" && !isClassValid(tag, a.value)) kid.removeAttribute("class");
+    }
+    cleanContainer(kid);
+  }
 }
 
 // ─── Start ─────────────────────────────────────────────────────────────────

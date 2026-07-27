@@ -95,9 +95,9 @@
 
     </section>
 
-    <!-- ─── Tab: Dashboard (Platzhalter) ─────────────────────────────── -->
+    <!-- ─── Tab: Dashboard ───────────────────────────────────────────── -->
     <section id="tab-dashboard" class="tab-panel" role="tabpanel" hidden>
-      <p class="empty">Dashboard folgt später.</p>
+      <div id="section-cards" class="section-cards"></div>
     </section>
 
     <!-- ─── Floating Add Button ──────────────────────────────────────── -->
@@ -158,6 +158,29 @@
         <button class="btn-ghost"   data-close>Abbrechen</button>
         <button id="save-btn" class="btn-primary">Speichern</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- ─── Modal: Dashboard-Abschnitt bearbeiten ──────────────────────── -->
+  <div id="editor-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-editor-close></div>
+    <div class="modal-sheet editor-sheet" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      <header class="modal-head editor-head">
+        <button type="button" class="btn-ghost" data-editor-close>Abbrechen</button>
+        <h2 id="editor-title">Bearbeiten</h2>
+        <button type="button" id="editor-save" class="btn-primary editor-save-btn">Fertig</button>
+      </header>
+      <div class="editor-toolbar" role="toolbar" aria-label="Formatierung">
+        <button type="button" data-cmd="bold"   title="Fett"><b>B</b></button>
+        <button type="button" data-cmd="italic" title="Kursiv"><i>I</i></button>
+        <span class="editor-toolbar-sep" aria-hidden="true"></span>
+        <button type="button" data-cmd="ul"     title="Aufzählung"><i data-lucide="list"></i></button>
+        <button type="button" data-cmd="ol"     title="Nummerierte Liste"><i data-lucide="list-ordered"></i></button>
+        <button type="button" data-cmd="check"  title="Checkliste"><i data-lucide="square-check"></i></button>
+      </div>
+      <div class="modal-body editor-body">
+        <div id="editor" class="rich-content editor" contenteditable="true" spellcheck="true"></div>
+      </div>
     </div>
   </div>
 

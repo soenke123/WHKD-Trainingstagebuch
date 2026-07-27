@@ -123,3 +123,35 @@ create policy auth_insert on focus_areas
   for insert to authenticated with check (true);
 create policy auth_delete on focus_areas
   for delete to authenticated using (true);
+
+-- ─── Dashboard-Sections (Notizen / Events / Prüflinge) ──────────────────────
+-- Genau drei Zeilen, per `slot` referenziert. Titel ist frei umbenennbar,
+-- Inhalt ist sanitized HTML mit optionalen `data-author`-Attributen auf den
+-- Top-Level-Blöcken (siehe app.js), damit wir pro Absatz einfärben können,
+-- wer den Text zuletzt bearbeitet hat.
+
+create table if not exists sections (
+  slot int primary key check (slot in (1, 2, 3)),
+  title text not null,
+  content text not null default '',
+  updated_by uuid references auth.users(id),
+  updated_at timestamptz default now()
+);
+
+insert into sections (slot, title, content) values
+  (1, 'Notizen',   ''),
+  (2, 'Events',    ''),
+  (3, 'Prüflinge', '')
+on conflict (slot) do nothing;
+
+alter table sections enable row level security;
+
+drop policy if exists auth_read   on sections;
+drop policy if exists auth_update on sections;
+
+create policy auth_read on sections
+  for select to authenticated using (true);
+
+create policy auth_update on sections
+  for update to authenticated using (true)
+  with check (updated_by = auth.uid());
