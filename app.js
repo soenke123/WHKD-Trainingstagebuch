@@ -85,6 +85,8 @@ const el = {
   focusList:    $("focus-list"),
 
   fab:          $("fab"),
+  deleteZone:   $("delete-zone"),
+  toast:        $("toast"),
 
   modal:        $("modal"),
   modalTech:    $("modal-tech-chips"),
@@ -130,6 +132,27 @@ function fmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })
        + " · " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+
+// Kurzform zum schnellen Scannen in den Kategorielisten:
+// "heute" / "gestern" / "vor 5 T." / "12.03.25"
+function relDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d);  day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff <= 0)  return "heute";
+  if (diff === 1) return "gestern";
+  if (diff < 30)  return `vor ${diff} T.`;
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+
+function showToast(msg, ms = 2600) {
+  el.toast.textContent = msg;
+  el.toast.hidden = false;
+  clearTimeout(el.toast._t);
+  el.toast._t = setTimeout(() => { el.toast.hidden = true; }, ms);
 }
 
 // Wert für <input type="datetime-local"> — lokale Zeit ohne TZ-Suffix.
@@ -224,8 +247,8 @@ el.tabButtons.forEach((btn) => {
 
 async function refresh() {
   const [techRes, focusRes, entryRes] = await Promise.all([
-    supa.from("technique_stats").select("id, name, usage_count"),
-    supa.from("focus_area_stats").select("id, name, usage_count"),
+    supa.from("technique_stats").select("id, name, usage_count, last_used_at"),
+    supa.from("focus_area_stats").select("id, name, usage_count, last_used_at"),
     supa.from("entries")
       .select("id, comment, created_at, user_id, entry_techniques(technique_id), entry_focus_areas(focus_area_id)")
       .order("created_at", { ascending: false })
@@ -263,16 +286,21 @@ function renderCategoryList(root, items, selectedSet, kind) {
     li.innerHTML = `
       <span class="cat-check" aria-hidden="true"></span>
       <i data-lucide="${iconFor(kind, it.name)}" class="cat-icon"></i>
-      <span class="name"></span>
+      <span class="cat-body">
+        <span class="name"></span>
+        <span class="last-date"></span>
+      </span>
       <span class="count"></span>
     `;
-    li.querySelector(".name").textContent  = it.name;
-    li.querySelector(".count").textContent = it.usage_count;
+    li.querySelector(".name").textContent      = it.name;
+    li.querySelector(".last-date").textContent = relDate(it.last_used_at);
+    li.querySelector(".count").textContent     = it.usage_count;
     li.addEventListener("click", () => {
       if (selectedSet.has(it.id)) selectedSet.delete(it.id);
       else                        selectedSet.add(it.id);
       li.setAttribute("aria-pressed", selectedSet.has(it.id) ? "true" : "false");
     });
+    attachLongPressDelete(li, it, kind);
     root.appendChild(li);
   }
 }
@@ -498,6 +526,145 @@ el.saveBtn.addEventListener("click", async () => {
   closeModal();
   await refresh();
 });
+
+// ─── Long-Press + Drag-to-Delete ───────────────────────────────────────────
+// Gedrückt halten (~450 ms) auf einem Listen-Element blendet oben eine rote
+// Zone ein. Zieht man das Element hinein und lässt los, wird die Kategorie
+// gelöscht. Da entry_techniques/entry_focus_areas per FK `restrict` schützen,
+// scheitert das Löschen serverseitig, wenn die Kategorie in einem Training
+// verwendet wird — in dem Fall zeigen wir eine freundliche Meldung.
+
+const LONG_PRESS_MS = 450;
+const MOVE_THRESHOLD = 10;
+
+let dragState = null;
+
+function attachLongPressDelete(li, item, kind) {
+  let timer = null;
+  let startX = 0, startY = 0;
+  let didDrag = false;
+
+  const cancelTimer = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+  };
+
+  li.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    didDrag = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    cancelTimer();
+    timer = setTimeout(() => {
+      timer = null;
+      didDrag = true;
+      startDrag(li, item, kind, e);
+    }, LONG_PRESS_MS);
+  });
+
+  li.addEventListener("pointermove", (e) => {
+    if (timer) {
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_THRESHOLD) cancelTimer();
+      return;
+    }
+    if (dragState && dragState.li === li) {
+      moveDrag(e);
+      e.preventDefault();
+    }
+  });
+
+  li.addEventListener("pointerup", (e) => {
+    cancelTimer();
+    if (dragState && dragState.li === li) endDrag(e);
+  });
+
+  li.addEventListener("pointercancel", () => {
+    cancelTimer();
+    if (dragState && dragState.li === li) cancelDrag();
+  });
+
+  // Verhindert das Toggeln nach Long-Press — Capture-Phase + stopImmediate,
+  // damit der weiter oben registrierte Klick-Toggler nicht mehr feuert.
+  li.addEventListener("click", (e) => {
+    if (didDrag) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      didDrag = false;
+    }
+  }, true);
+}
+
+function startDrag(li, item, kind, e) {
+  const rect = li.getBoundingClientRect();
+  const ghost = li.cloneNode(true);
+  ghost.classList.add("cat-ghost");
+  ghost.classList.remove("is-dragging");
+  ghost.removeAttribute("aria-pressed");
+  ghost.style.width = rect.width + "px";
+  document.body.appendChild(ghost);
+
+  li.classList.add("is-dragging");
+  document.body.classList.add("is-dragging");
+  el.deleteZone.hidden = false;
+  el.deleteZone.classList.remove("is-hover");
+  refreshIcons();
+
+  dragState = {
+    li, item, kind, ghost,
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+  };
+  moveDrag(e);
+  try { li.setPointerCapture(e.pointerId); } catch { /* Safari kann meckern */ }
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+function moveDrag(e) {
+  const g = dragState.ghost;
+  g.style.left = (e.clientX - dragState.offsetX) + "px";
+  g.style.top  = (e.clientY - dragState.offsetY) + "px";
+  el.deleteZone.classList.toggle("is-hover", isOverDeleteZone(e.clientX, e.clientY));
+}
+
+function isOverDeleteZone(x, y) {
+  if (el.deleteZone.hidden) return false;
+  const r = el.deleteZone.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
+async function endDrag(e) {
+  const s = dragState;
+  const drop = isOverDeleteZone(e.clientX, e.clientY);
+  cleanupDrag();
+  if (drop) await deleteCategory(s.item, s.kind);
+}
+
+function cancelDrag() { cleanupDrag(); }
+
+function cleanupDrag() {
+  if (!dragState) return;
+  dragState.ghost.remove();
+  dragState.li.classList.remove("is-dragging");
+  document.body.classList.remove("is-dragging");
+  el.deleteZone.hidden = true;
+  el.deleteZone.classList.remove("is-hover");
+  dragState = null;
+}
+
+async function deleteCategory(item, kind) {
+  const table = kind === "tech" ? "techniques" : "focus_areas";
+  const { error } = await supa.from(table).delete().eq("id", item.id);
+  if (error) {
+    const friendly = /foreign key|violates/i.test(error.message)
+      ? `„${item.name}" wurde schon trainiert und kann nicht gelöscht werden.`
+      : `Konnte „${item.name}" nicht löschen: ${error.message}`;
+    showToast(friendly, 3500);
+    return;
+  }
+  if (kind === "tech") selectedTech.delete(item.id);
+  else                 selectedFocus.delete(item.id);
+  showToast(`„${item.name}" gelöscht.`);
+  await refresh();
+}
 
 // ─── Start ─────────────────────────────────────────────────────────────────
 

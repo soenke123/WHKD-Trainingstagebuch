@@ -38,15 +38,23 @@ create table entry_focus_areas (
 -- ─── Views für Häufigkeitszahlen ────────────────────────────────────────────
 
 create view technique_stats as
-  select t.id, t.name, count(et.entry_id)::int as usage_count
+  select t.id,
+         t.name,
+         count(et.entry_id)::int as usage_count,
+         max(e.created_at)       as last_used_at
   from techniques t
   left join entry_techniques et on et.technique_id = t.id
+  left join entries e            on e.id = et.entry_id
   group by t.id, t.name;
 
 create view focus_area_stats as
-  select f.id, f.name, count(ef.entry_id)::int as usage_count
+  select f.id,
+         f.name,
+         count(ef.entry_id)::int as usage_count,
+         max(e.created_at)       as last_used_at
   from focus_areas f
   left join entry_focus_areas ef on ef.focus_area_id = f.id
+  left join entries e            on e.id = ef.entry_id
   group by f.id, f.name;
 
 -- ─── Seed: echte Kategorien ─────────────────────────────────────────────────
@@ -106,8 +114,12 @@ create policy auth_read on techniques
   for select to authenticated using (true);
 create policy auth_insert on techniques
   for insert to authenticated with check (true);
+create policy auth_delete on techniques
+  for delete to authenticated using (true);
 
 create policy auth_read on focus_areas
   for select to authenticated using (true);
 create policy auth_insert on focus_areas
   for insert to authenticated with check (true);
+create policy auth_delete on focus_areas
+  for delete to authenticated using (true);

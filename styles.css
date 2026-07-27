@@ -419,8 +419,12 @@ svg.lucide {
   min-height: 42px;
   cursor: pointer;
   user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: pan-y;
+  transition: opacity 0.15s ease;
 }
 .cat-list li:last-child { border-bottom: 0; }
+.cat-list li.is-dragging { opacity: 0.35; }
 
 .cat-check {
   width: 16px;
@@ -455,15 +459,29 @@ svg.lucide {
 }
 .cat-list li[aria-pressed="true"] .cat-icon { opacity: 1; }
 
-.cat-list .name {
+.cat-list .cat-body {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cat-list .name {
   font-size: 0.82rem;
   line-height: 1.2;
   overflow-wrap: anywhere;
   hyphens: auto;
 }
 .cat-list li[aria-pressed="true"] .name { color: var(--col); font-weight: 700; }
+
+.cat-list .last-date {
+  font-size: 0.62rem;
+  line-height: 1.1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.cat-list .last-date:empty { display: none; }
 
 .cat-list .count {
   flex: 0 0 auto;
@@ -661,3 +679,72 @@ svg.lucide {
 }
 
 [hidden] { display: none !important; }
+
+/* ─── Long-Press-Löschen (Delete-Zone + Ghost + Toast) ────────────────── */
+
+body.is-dragging { touch-action: none; }
+body.is-dragging * { -webkit-user-select: none; user-select: none; }
+
+.delete-zone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-width: 480px;
+  margin: 0 auto;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 16px;
+  background: #b23a48;
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  box-shadow: 0 6px 16px rgba(178, 58, 72, 0.35);
+  animation: deleteIn 0.18s ease-out;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.delete-zone.is-hover {
+  background: #8a1c2c;
+  transform: scale(1.02);
+}
+.delete-zone svg { width: 16px; height: 16px; }
+@keyframes deleteIn { from { transform: translateY(-100%) } to { transform: translateY(0) } }
+
+.cat-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 199;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  box-shadow: 0 12px 28px rgba(26, 39, 68, 0.25);
+  opacity: 0.95;
+  transform: rotate(-2deg);
+  transition: none;
+}
+.cat-ghost .cat-check { display: none; }
+
+.toast {
+  position: fixed;
+  bottom: calc(90px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  max-width: 88%;
+  padding: 10px 16px;
+  background: rgba(26, 39, 68, 0.95);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  text-align: center;
+  box-shadow: 0 6px 20px rgba(26, 39, 68, 0.3);
+  animation: toastIn 0.15s ease-out;
+}
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 6px) } to { opacity: 1; transform: translate(-50%, 0) } }

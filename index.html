@@ -34,6 +34,12 @@
   <!-- ─── App ─────────────────────────────────────────────────────────── -->
   <main id="app" class="app" hidden>
 
+    <!-- Erscheint beim Long-Press auf ein Kategorie-Element -->
+    <div id="delete-zone" class="delete-zone" hidden aria-hidden="true">
+      <i data-lucide="trash-2"></i>
+      <span>Zum Löschen hier ablegen</span>
+    </div>
+
     <header class="topbar">
       <h1 class="brand"><span class="brand-mark">WHKD</span> Trainingstagebuch</h1>
       <button id="logout-btn" class="btn-ghost" title="Abmelden">Logout</button>
@@ -96,6 +102,8 @@
 
     <!-- ─── Floating Add Button ──────────────────────────────────────── -->
     <button id="fab" class="fab" aria-label="Neuen Eintrag hinzufügen">+</button>
+
+    <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
 
   </main>
 
