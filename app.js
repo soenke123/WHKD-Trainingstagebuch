@@ -91,6 +91,8 @@ const el = {
   modalFocus:   $("modal-focus-chips"),
   modalComment: $("modal-comment"),
   modalError:   $("modal-error"),
+  modalDate:    $("modal-date"),
+  modalDateDisp:$("modal-date-display"),
   saveBtn:      $("save-btn"),
 
   newTechForm:   $("new-tech-form"),
@@ -128,6 +130,13 @@ function fmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })
        + " · " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+
+// Wert für <input type="datetime-local"> — lokale Zeit ohne TZ-Suffix.
+function toLocalInputValue(date) {
+  const off = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - off * 60000);
+  return local.toISOString().slice(0, 16); // YYYY-MM-DDTHH:mm
 }
 
 function showError(node, msg) {
@@ -366,11 +375,21 @@ el.modal.querySelectorAll("[data-close]").forEach((n) =>
 function openModal() {
   clearError(el.modalError);
   el.modalComment.value = "";
+  const now = new Date();
+  el.modalDate.value = toLocalInputValue(now);
+  el.modalDateDisp.textContent = fmtDate(now.toISOString());
   renderToggleChips(el.modalTech,  techniques,  selectedTech,  "tech");
   renderToggleChips(el.modalFocus, focusAreas,  selectedFocus, "focus");
   el.modal.hidden = false;
   refreshIcons();
 }
+
+el.modalDate.addEventListener("change", () => {
+  if (!el.modalDate.value) {
+    el.modalDate.value = toLocalInputValue(new Date());
+  }
+  el.modalDateDisp.textContent = fmtDate(new Date(el.modalDate.value).toISOString());
+});
 function closeModal() {
   el.modal.hidden = true;
 }
@@ -440,9 +459,17 @@ el.saveBtn.addEventListener("click", async () => {
     return;
   }
 
+  const createdAt = el.modalDate.value
+    ? new Date(el.modalDate.value).toISOString()
+    : new Date().toISOString();
+
   const { data: entry, error: entryErr } = await supa
     .from("entries")
-    .insert({ user_id: currentUser.id, comment: el.modalComment.value.trim() || null })
+    .insert({
+      user_id: currentUser.id,
+      comment: el.modalComment.value.trim() || null,
+      created_at: createdAt,
+    })
     .select()
     .single();
 
