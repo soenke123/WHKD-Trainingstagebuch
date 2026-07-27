@@ -110,7 +110,9 @@ let focusAreas = [];
 let selectedTech  = new Set();
 let selectedFocus = new Set();
 
-let currentUser    = null;       // { id, email, name }
+let currentUser    = null;       // { id, email, name, slug }
+let currentSchool  = null;       // { id, slug, name }
+let trainers       = [];         // [{ user_id, slug, display_name, color }] — Kollegen der eigenen Schule
 let historyEntries = [];         // letzte bis zu 16 Trainings, entries[0] = neuestes
 let historyIndex   = 0;          // 0 = neuestes, größer = älter
 
@@ -118,14 +120,6 @@ let historyIndex   = 0;          // 0 = neuestes, größer = älter
 
 function usernameToEmail(u) {
   return `${u.trim().toLowerCase()}@${EMAIL_DOMAIN}`;
-}
-
-function displayName(email) {
-  if (!email) return "";
-  const local = email.split("@")[0].toLowerCase();
-  if (local === "sihinghauke")  return "SihingHauke";
-  if (local === "sihingsoenke") return "SihingSoenke";
-  return local.charAt(0).toUpperCase() + local.slice(1);
 }
 
 function fmtDate(iso) {
@@ -171,13 +165,21 @@ function clearError(node) {
   node.hidden = true;
 }
 
-// Der andere Trainer — wir haben genau zwei Konten.
 function authorFor(userId) {
+  const t = trainers.find((tr) => tr.user_id === userId);
+  if (t) return t.display_name;
   if (currentUser && currentUser.id === userId) return currentUser.name;
-  if (currentUser) {
-    return currentUser.name === "SihingHauke" ? "SihingSoenke" : "SihingHauke";
-  }
   return "Trainer";
+}
+
+function updateBrandSchool() {
+  document.querySelectorAll(".brand-school").forEach((node) => {
+    node.textContent = currentSchool ? currentSchool.name : "";
+    node.hidden = !currentSchool;
+  });
+  document.querySelectorAll(".brand-sep").forEach((node) => {
+    node.hidden = !currentSchool;
+  });
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
@@ -210,6 +212,9 @@ el.loginForm.addEventListener("submit", async (e) => {
 el.logout.addEventListener("click", async () => {
   await supa.auth.signOut();
   currentUser = null;
+  currentSchool = null;
+  trainers = [];
+  updateBrandSchool();
   el.app.hidden = true;
   el.login.hidden = false;
 });
@@ -218,14 +223,34 @@ async function enterApp() {
   el.login.hidden = true;
   el.app.hidden = false;
   const { data } = await supa.auth.getUser();
-  if (data.user) {
-    currentUser = {
-      id: data.user.id,
-      email: data.user.email,
-      name: displayName(data.user.email),
-      slug: slugFromEmail(data.user.email),
-    };
+  if (!data.user) return;
+
+  // Trainer-Row + verlinkte Schule holen. Ohne diese Zuordnung darf niemand
+  // in die App — RLS würde ohnehin überall leere Ergebnisse liefern.
+  const { data: me, error } = await supa
+    .from("trainers")
+    .select("user_id, slug, display_name, color, school:schools(id, slug, name)")
+    .eq("user_id", data.user.id)
+    .single();
+
+  if (error || !me || !me.school) {
+    console.error("Konto keiner Schule zugeordnet", error);
+    showError(el.loginError,
+      "Konto ist keiner Schule zugeordnet. Bitte an den Admin wenden.");
+    await supa.auth.signOut();
+    el.app.hidden = true;
+    el.login.hidden = false;
+    return;
   }
+
+  currentSchool = me.school;
+  currentUser = {
+    id: data.user.id,
+    email: data.user.email,
+    slug: me.slug,
+    name: me.display_name,
+  };
+  updateBrandSchool();
   await refresh();
 }
 
@@ -247,7 +272,7 @@ el.tabButtons.forEach((btn) => {
 // ─── Daten laden & rendern ─────────────────────────────────────────────────
 
 async function refresh() {
-  const [techRes, focusRes, entryRes, secRes] = await Promise.all([
+  const [techRes, focusRes, entryRes, secRes, trainerRes] = await Promise.all([
     supa.from("technique_stats").select("id, name, usage_count, last_used_at"),
     supa.from("focus_area_stats").select("id, name, usage_count, last_used_at"),
     supa.from("entries")
@@ -255,6 +280,7 @@ async function refresh() {
       .order("created_at", { ascending: false })
       .limit(16),
     supa.from("sections").select("slot, title, content, updated_at, updated_by").order("slot"),
+    supa.from("trainers").select("user_id, slug, display_name, color"),
   ]);
 
   if (techRes.error || focusRes.error || entryRes.error) {
@@ -264,12 +290,14 @@ async function refresh() {
   // Sections dürfen fehlen (Schema evtl. noch nicht ausgeführt) — dann bleibt
   // das Dashboard nur leer, statt die ganze App zu blockieren.
   if (secRes.error) console.warn("sections nicht geladen:", secRes.error.message);
+  if (trainerRes.error) console.warn("trainers nicht geladen:", trainerRes.error.message);
 
   techniques      = sortStats(techRes.data);
   focusAreas      = sortStats(focusRes.data);
   historyEntries  = entryRes.data;
   historyIndex    = 0;
   sections        = secRes.data || [];
+  trainers        = trainerRes.data || trainers;
 
   renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
   renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
@@ -706,17 +734,13 @@ async function deleteCategory(item, kind) {
   await refresh();
 }
 
-// ─── Dashboard: User-Farben ────────────────────────────────────────────────
-// Farbe pro Nutzer wird aus dem E-Mail-Local-Part abgeleitet, damit sie
-// deterministisch und ohne DB-Lookup bleibt. Bekannte Trainer sind fix
-// gemappt; alles darüber hinaus fällt auf eine kleine Fallback-Palette
-// zurück (Hash über den Slug), damit auch spätere Nutzer eine feste,
-// unverwechselbare Farbe bekommen.
+// ─── Dashboard: Autorenfarben ──────────────────────────────────────────────
+// Farbe pro Trainer kommt primär aus `trainers.color` (im SQL-Editor beim
+// Anlegen des Trainers gesetzt). Ist dort nichts hinterlegt, wählen wir
+// deterministisch eine Farbe aus der Fallback-Palette per Hash über den
+// Slug, damit auch nachträgliche Trainer sofort eine feste, wiedererkennbare
+// Farbe haben.
 
-const USER_COLORS = {
-  sihinghauke:  "#1a2744",   // Navy — SihingHauke
-  sihingsoenke: "#c49a2a",   // Gold — SihingSoenke
-};
 const FALLBACK_COLORS = [
   "#0f7c8a",   // Teal
   "#4a7c59",   // Forest
@@ -725,13 +749,10 @@ const FALLBACK_COLORS = [
   "#c96b1f",   // Rust
 ];
 
-function slugFromEmail(email) {
-  return (email || "").split("@")[0].toLowerCase();
-}
-
-function colorForUser(slug) {
+function colorForSlug(slug) {
   if (!slug) return "transparent";
-  if (USER_COLORS[slug]) return USER_COLORS[slug];
+  const t = trainers.find((tr) => tr.slug === slug);
+  if (t && t.color) return t.color;
   let h = 0;
   for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) >>> 0;
   return FALLBACK_COLORS[h % FALLBACK_COLORS.length];
@@ -811,7 +832,7 @@ function renderRichContentInto(container, html) {
 
   // Autorenfarbe pro Block als CSS-Variable setzen
   container.querySelectorAll("[data-author]").forEach((node) => {
-    node.style.setProperty("--author", colorForUser(node.getAttribute("data-author")));
+    node.style.setProperty("--author", colorForSlug(node.getAttribute("data-author")));
   });
 
   // Sicherstellen, dass jede Checkliste ein sichtbares Kästchen hat und einen
@@ -849,6 +870,7 @@ function startRename(card, section) {
     if (!save || !newTitle || newTitle === section.title) return;
     const { error } = await supa.from("sections")
       .update({ title: newTitle })
+      .eq("school_id", currentSchool.id)
       .eq("slot", section.slot);
     if (error) {
       showToast(`Umbenennen fehlgeschlagen: ${error.message}`, 3500);
@@ -986,6 +1008,7 @@ async function persistSection(slot, html) {
       updated_by: currentUser ? currentUser.id : null,
       updated_at: new Date().toISOString(),
     })
+    .eq("school_id", currentSchool.id)
     .eq("slot", slot);
   if (error) {
     showToast(`Speichern fehlgeschlagen: ${error.message}`, 3500);

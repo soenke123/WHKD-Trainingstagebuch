@@ -4,39 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**WHKD Trainingstagebuch** — kleine mobile-first Webapp für zwei Kung-Fu-Trainer (SihingHauke, SihingSoenke), um sich gegenseitig anzuzeigen, welche Techniken/Schwerpunkte zuletzt trainiert wurden. Nur zwei Nutzer, kein Public-Facing.
+**WHKD Trainingstagebuch** — kleine mobile-first Webapp für Kung-Fu-Trainer, um sich innerhalb einer Schule gegenseitig anzuzeigen, welche Techniken/Schwerpunkte zuletzt trainiert wurden. Multi-Tenant: mehrere Schulen (Ortsverbände, z.B. „Kiel", „Hamburg") sind komplett isoliert — jede hat eigene Techniken, Schwerpunkte, Einträge und Dashboard-Sections. Kein Public-Facing.
 
 ## Stack & Hosting
 
 - **Frontend:** reines HTML / CSS / Vanilla JS. Kein Bundler, kein Framework, kein npm. Supabase-SDK per CDN in `index.html`.
 - **Hosting:** Vercel als statische Seite (kein Build-Command, kein Output-Dir).
-- **Backend:** Supabase (Auth, Postgres, RLS). Alle Tabellen + Views + Policies in `schema.sql`.
+- **Backend:** Supabase (Auth, Postgres, RLS). Multi-Tenant-Schema in `schema.sql`; für bestehende Single-Tenant-DBs gibt es `schema-multitenant-migration.sql`.
 
 Konsequenz: keine Import-Statements, kein `type="module"`, kein `package.json` erwünscht. Wenn eine Änderung ein Build-System nötig machen würde, vorher fragen.
 
 ## Auth-Konvention
 
-Supabase Auth erwartet E-Mails, aber die App zeigt "Benutzername". `app.js` hängt intern `@whkd.local` an. Konten sind:
-- `sihinghauke@whkd.local` → Anzeigename `SihingHauke`
-- `sihingsoenke@whkd.local` → Anzeigename `SihingSoenke`
+Supabase Auth erwartet E-Mails, aber die App zeigt "Benutzername". `app.js` hängt intern `@whkd.local` an. Anzeigename, Farbe und die Zugehörigkeit zur Schule stehen in der `trainers`-Tabelle — verknüpft mit `auth.users` per `user_id`. Der `trainers.slug` sollte dem Local-Part der E-Mail entsprechen (z.B. `sihinghauke@whkd.local` → `slug = 'sihinghauke'`), damit `data-author`-Attribute in gespeicherten Dashboard-Sections stabil bleiben.
 
-Kein Profil-Table — Anzeigenamen werden aus dem E-Mail-Local-Part abgeleitet (`displayName()` in `app.js`).
+Neue Trainer werden ausschließlich manuell angelegt: erst per Supabase-Auth-Dashboard, dann ein `insert into trainers (...)` im SQL-Editor. Kein In-App-Admin.
 
 ## Architektur
 
-Eine HTML-Seite, zwei Screens (`#login`, `#app`), umgeschaltet per `hidden`-Attribut. Innerhalb der App zwei Tabs (`#tab-tagebuch`, `#tab-dashboard`). Dashboard ist Platzhalter — kommt in einer späteren Iteration.
+Eine HTML-Seite, zwei Screens (`#login`, `#app`), umgeschaltet per `hidden`-Attribut. Innerhalb der App zwei Tabs (`#tab-tagebuch`, `#tab-dashboard`).
 
 Datenfluss:
-1. `checkSession()` → wenn Session da, `enterApp()` → `refresh()`.
-2. `refresh()` lädt parallel `technique_stats`, `focus_area_stats`, letzte 16 `entries` inkl. m:n-Joins.
-3. Renderer schreiben in State-Variablen (`techniques`, `focusAreas`, Sets `selectedTech`/`selectedFocus`).
-4. FAB öffnet Modal, das Chips aus dem gleichen State rendert. Save → `insert into entries` + Bulk-Inserts in `entry_techniques`/`entry_focus_areas` → `refresh()`.
+1. `checkSession()` → wenn Session da, `enterApp()`.
+2. `enterApp()` lädt einmal die eigene Trainer-Row mit verknüpfter Schule (`currentSchool`, `currentUser`), setzt den Schulnamen im Header (`.brand-school`) und ruft `refresh()`.
+3. `refresh()` lädt parallel `technique_stats`, `focus_area_stats`, die letzten 16 `entries` inkl. m:n-Joins, die drei Dashboard-`sections` und alle `trainers` der eigenen Schule. RLS scopet jede Query automatisch über `my_school_id()`.
+4. Renderer schreiben in State (`techniques`, `focusAreas`, `trainers`, `historyEntries`, `sections`, Sets `selectedTech`/`selectedFocus`).
+5. FAB öffnet Modal, das Chips aus dem gleichen State rendert. Save → `insert into entries` (+ Bulk-Inserts in `entry_techniques`/`entry_focus_areas`) → `refresh()`. `school_id` setzt ein Before-Insert-Trigger automatisch; der Client muss das nicht mitschicken.
 
 Häufigkeit kommt aus SQL-Views (`technique_stats`, `focus_area_stats`) — nicht als eigenes Feld gespeichert. Wenn ein Feature das braucht (z.B. „gemeinsam vs. persönlich zählen"), Views anpassen statt Client-Logik zu duplizieren.
 
+`authorFor(userId)` löst Anzeigenamen über die `trainers`-Liste auf — keine hartcodierten if/else-Mappings mehr. `colorForSlug(slug)` liest `trainers.color`, sonst deterministische Fallback-Palette (`FALLBACK_COLORS`).
+
 ## Kategorien
 
-Initiale Techniken und Schwerpunkte stehen im Seed-Block von `schema.sql`. Neue Kategorien können Nutzer im Add-Modal inline anlegen (`addCategory()`); RLS erlaubt `insert` für authentifizierte Nutzer.
+Standard-Katalog (16 Techniken, 8 Schwerpunkte) wird von der SQL-Funktion `bootstrap_school(slug, name)` beim Anlegen einer neuen Schule kopiert. Neue Kategorien können Trainer inline im Add-Modal anlegen (`addCategory()`); RLS erlaubt `insert` nur für die eigene Schule.
+
+## Neue Schule anlegen
+
+Im Supabase-SQL-Editor: `select bootstrap_school('hamburg', 'Hamburg');` — legt Schule + Standard-Katalog + drei leere Dashboard-Slots an. Trainer danach manuell (Auth-Dashboard + `insert into trainers`). Details in `README.md`.
 
 ## Lokal ausführen
 

@@ -175,13 +175,29 @@ svg.lucide {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  line-height: 1;
+  line-height: 1.15;
+  min-width: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 2px;
 }
 .brand-mark {
   color: var(--accent);
   font-weight: 800;
-  margin-right: 6px;
   letter-spacing: 0.14em;
+}
+.brand-sep {
+  opacity: 0.4;
+  font-weight: 400;
+}
+.brand-school {
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+.brand-title {
+  font-weight: 700;
 }
 .topbar .btn-ghost {
   background: transparent;
