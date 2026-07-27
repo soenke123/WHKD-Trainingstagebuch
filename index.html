@@ -3,8 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#c00c1c" />
+  <meta name="theme-color" content="#1a2744" />
   <title>WHKD Trainingstagebuch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -59,11 +62,11 @@
           </div>
         </header>
         <div class="last-cols">
-          <div>
+          <div class="last-col last-col--tech">
             <h3>Techniken</h3>
             <ul id="last-techniques" class="chips"></ul>
           </div>
-          <div>
+          <div class="last-col last-col--focus">
             <h3>Schwerpunkt</h3>
             <ul id="last-focus" class="chips"></ul>
           </div>
@@ -74,11 +77,11 @@
       <p id="no-training" class="empty" hidden>Noch kein Training festgehalten. Tippe unten auf <b>+</b>.</p>
 
       <section class="cats">
-        <div class="cats-col">
+        <div class="cats-col cats-col--tech">
           <h2>Techniken</h2>
           <ul id="tech-list" class="cat-list"></ul>
         </div>
-        <div class="cats-col">
+        <div class="cats-col cats-col--focus">
           <h2>Schwerpunkte</h2>
           <ul id="focus-list" class="cat-list"></ul>
         </div>
@@ -107,7 +110,7 @@
 
       <div class="modal-body">
 
-        <section class="modal-section">
+        <section class="modal-section modal-section--tech">
           <h3>Techniken</h3>
           <ul id="modal-tech-chips" class="chips chips-toggle"></ul>
           <form id="new-tech-form" class="inline-add">
@@ -116,7 +119,7 @@
           </form>
         </section>
 
-        <section class="modal-section">
+        <section class="modal-section modal-section--focus">
           <h3>Schwerpunkte</h3>
           <ul id="modal-focus-chips" class="chips chips-toggle"></ul>
           <form id="new-focus-form" class="inline-add">

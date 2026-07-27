@@ -50,4 +50,13 @@ Dann `http://localhost:8000/`. Kein Build-Step. Damit Supabase-Requests funktion
 
 ## Design
 
-Weißer Hintergrund, schwarze Typografie, WHKD-Rot (`#c00c1c`) als einziger Akzent. Angelehnt an whkd-kung-fu-kiel.de. Mobile-first (`max-width: 480px`), kein separates Desktop-Layout. System-Sans, keine Icon-Fonts.
+Angelehnt an das Design von `..\whkd-kiel\` (Next.js-Website des Vereins). Palette in `styles.css` als CSS-Custom-Properties:
+
+- `--primary` `#1a2744` (Navy) — Header, Text, „Techniken"-Spalte
+- `--accent`  `#c49a2a` (Gold) — CTAs, FAB, Eyebrows, „Schwerpunkte"-Spalte
+- `--surface` `#f7f5f0` (warmes Off-White) — Karten-Hintergrund
+- `--tech` / `--focus` steuern die Spaltenfarben. Techniken sind immer Navy, Schwerpunkte immer Gold — sowohl in den Kategorienlisten unten als auch in der „Letztes Training"-Karte und den Modal-Toggle-Chips.
+
+Typografie: **Barlow** (Body) und **Barlow Condensed** (Display, Uppercase) von Google Fonts, in `index.html` per `<link>` geladen. Charakteristisch sind die kleinen Uppercase-„Eyebrow"-Labels mit sehr weitem Letter-Spacing (`0.28em`–`0.35em`).
+
+Mobile-first (`max-width: 480px`), kein separates Desktop-Layout. Icons per Lucide-CDN.
