@@ -46,10 +46,17 @@
 
       <article id="last-training" class="last-training" hidden>
         <header class="last-training-head">
-          <span class="last-training-title">Letztes Training</span>
-          <span class="last-training-meta">
-            <span id="last-author"></span> · <span id="last-date"></span>
-          </span>
+          <div class="last-title-block">
+            <div id="last-title" class="last-training-title">Letztes Training</div>
+            <div class="last-training-meta">
+              <span id="last-author"></span> · <span id="last-date"></span>
+            </div>
+          </div>
+          <div class="hist-nav">
+            <button id="hist-prev" class="hist-btn" aria-label="Neueres Training"><i data-lucide="chevron-left"></i></button>
+            <span id="hist-indicator">1/1</span>
+            <button id="hist-next" class="hist-btn" aria-label="Älteres Training"><i data-lucide="chevron-right"></i></button>
+          </div>
         </header>
         <div class="last-cols">
           <div>
@@ -136,8 +143,9 @@
     </div>
   </div>
 
-  <!-- Supabase SDK per CDN, dann Config, dann App -->
+  <!-- Supabase SDK, Lucide-Icons, Config, App -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
   <script src="config.js"></script>
   <script src="app.js" defer></script>
 </body>

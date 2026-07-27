@@ -35,6 +35,15 @@ h3 { font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; colo
 ul { list-style: none; margin: 0; padding: 0; }
 button { font: inherit; cursor: pointer; }
 
+/* Lucide-Icons: einheitliches Basis-Styling. Nach lucide.createIcons()
+   werden die <i data-lucide="…"> zu <svg class="lucide lucide-…">. */
+[data-lucide],
+svg.lucide {
+  stroke-width: 2;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 /* ─── Buttons ─────────────────────────────────────────────────────────── */
 
 .btn-primary {
@@ -47,6 +56,7 @@ button { font: inherit; cursor: pointer; }
   min-height: 44px;
 }
 .btn-primary:active { transform: translateY(1px); }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-ghost {
   background: transparent;
@@ -145,31 +155,72 @@ button { font: inherit; cursor: pointer; }
   margin: 0;
 }
 
-/* ─── Letztes Training ────────────────────────────────────────────────── */
+/* ─── Letztes Training (visuell abgesetzt) ────────────────────────────── */
 
 .last-training {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-left: 4px solid var(--accent);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 14px 14px 14px 12px;
   margin-bottom: 20px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  user-select: none;                 /* Swipe soll keinen Text markieren */
+  touch-action: pan-y;               /* Horizontal-Swipe wird von uns behandelt */
 }
+
 .last-training-head {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 10px;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
 }
+.last-title-block { min-width: 0; }
 .last-training-title {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 700;
+  color: var(--accent);
+  font-weight: 800;
 }
-.last-training-meta { font-size: 0.8rem; color: var(--muted); text-align: right; }
-#last-author { font-weight: 600; color: var(--fg); }
+.last-training-meta {
+  font-size: 0.85rem;
+  color: var(--fg);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#last-author { font-weight: 700; }
+
+.hist-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.hist-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--fg);
+}
+.hist-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.hist-btn svg { width: 16px; height: 16px; }
+#hist-indicator {
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: center;
+  font-size: 0.75rem;
+}
 
 .last-cols {
   display: grid;
@@ -179,38 +230,40 @@ button { font: inherit; cursor: pointer; }
 .last-comment {
   margin: 12px 0 0;
   padding-top: 12px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid color-mix(in srgb, var(--accent) 15%, var(--border));
   font-size: 0.95rem;
   white-space: pre-wrap;
 }
 
-/* Chips (im "Letztes Training" nur Anzeige) */
+/* Chips (Anzeige & Modal-Toggle) */
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 .chips li {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px 4px 8px;
   border-radius: 999px;
   background: var(--bg);
   border: 1px solid var(--border);
   font-size: 0.85rem;
+  line-height: 1.2;
 }
+.chips li svg { width: 13px; height: 13px; color: var(--muted); }
 
-/* Chips im Modal – klickbar */
 .chips-toggle li {
   cursor: pointer;
-  user-select: none;
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
+  min-height: 34px;
 }
 .chips-toggle li[aria-pressed="true"] {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: var(--accent);
 }
+.chips-toggle li[aria-pressed="true"] svg { color: var(--accent-fg); }
 
 /* ─── Kategorielisten ─────────────────────────────────────────────────── */
 
@@ -219,33 +272,24 @@ button { font: inherit; cursor: pointer; }
   grid-template-columns: 1fr 1fr;
   gap: var(--gap);
 }
+.cats-col { min-width: 0; }
 .cats-col h2 { margin-bottom: 8px; }
+
 .cat-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 8px;
+  gap: 6px;
+  padding: 8px 6px;
   border-bottom: 1px solid var(--border);
   min-height: 44px;
   cursor: pointer;
   user-select: none;
 }
 .cat-list li:last-child { border-bottom: 0; }
-.cat-list .name { flex: 1; font-size: 0.95rem; }
-.cat-list .count {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
-  min-width: 22px;
-  text-align: right;
-}
-.cat-list li[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-.cat-list li[aria-pressed="true"] .name { color: var(--accent); font-weight: 600; }
+
 .cat-check {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border: 1.5px solid var(--border);
   border-radius: 4px;
   display: inline-block;
@@ -259,11 +303,39 @@ button { font: inherit; cursor: pointer; }
 .cat-list li[aria-pressed="true"] .cat-check::after {
   content: "";
   position: absolute;
-  left: 4px; top: 1px;
+  left: 3px; top: 0px;
   width: 5px; height: 10px;
   border: solid #fff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
+}
+
+.cat-list .cat-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.cat-list li[aria-pressed="true"] .cat-icon { color: var(--accent); }
+
+.cat-list .name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+.cat-list li[aria-pressed="true"] .name { color: var(--accent); font-weight: 600; }
+
+.cat-list .count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  min-width: 20px;
+  text-align: right;
+  padding-left: 2px;
 }
 
 /* ─── FAB ─────────────────────────────────────────────────────────────── */
@@ -372,5 +444,4 @@ button { font: inherit; cursor: pointer; }
   text-align: center;
 }
 
-/* Utility */
 [hidden] { display: none !important; }

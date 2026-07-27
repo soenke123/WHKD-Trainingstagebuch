@@ -9,6 +9,47 @@ const supa = window.supabase.createClient(
   window.SUPABASE_ANON_KEY
 );
 
+// ─── Icon-Mapping (Lucide-Icon-Namen) ──────────────────────────────────────
+
+const TECH_ICONS = {
+  "Basis":               "circle-dot",
+  "Tabellen":            "table",
+  "Handkombinationen":   "hand-metal",
+  "Trittkombinationen":  "footprints",
+  "Offensiv Setups":     "sword",
+  "Defensiv Setups":     "shield",
+  "Würfe":               "rotate-cw",
+  "Chin-Na Techniken":   "link-2",
+  "Falltritte":          "chevrons-down",
+  "Greifkonter":         "grab",
+  "Schlagkonter":        "shield-alert",
+  "Trittkonter":         "shield-check",
+  "Messerkonter":        "scissors",
+  "Stockkonter":         "wand-2",
+  "Waffentraining":      "swords",
+  "Escrima":             "wand-sparkles",
+};
+
+const FOCUS_ICONS = {
+  "Beine":               "footprints",
+  "Arme":                "hand",
+  "Rumpf":               "shirt",
+  "Kondition":           "heart-pulse",
+  "Kraft":               "dumbbell",
+  "Pratze/Airbag":       "target",
+  "Multiman":            "users",
+  "Todmachertraining":   "skull",
+};
+
+function iconFor(kind, name) {
+  const map = kind === "tech" ? TECH_ICONS : FOCUS_ICONS;
+  return map[name] || "circle";
+}
+
+function refreshIcons() {
+  if (window.lucide) window.lucide.createIcons();
+}
+
 // ─── DOM-Handles ───────────────────────────────────────────────────────────
 
 const $ = (id) => document.getElementById(id);
@@ -28,12 +69,17 @@ const el = {
   tabDashboard: $("tab-dashboard"),
 
   lastTraining: $("last-training"),
+  lastTitle:    $("last-title"),
   lastAuthor:   $("last-author"),
   lastDate:     $("last-date"),
   lastTech:     $("last-techniques"),
   lastFocus:    $("last-focus"),
   lastComment:  $("last-comment"),
   noTraining:   $("no-training"),
+
+  histPrev:     $("hist-prev"),
+  histNext:     $("hist-next"),
+  histIndicator:$("hist-indicator"),
 
   techList:     $("tech-list"),
   focusList:    $("focus-list"),
@@ -55,10 +101,14 @@ const el = {
 
 // ─── State ─────────────────────────────────────────────────────────────────
 
-let techniques = [];       // [{id, name, usage_count}]
-let focusAreas = [];       // [{id, name, usage_count}]
-let selectedTech  = new Set();  // Set<number>
+let techniques = [];             // [{id, name, usage_count}]
+let focusAreas = [];
+let selectedTech  = new Set();
 let selectedFocus = new Set();
+
+let currentUser    = null;       // { id, email, name }
+let historyEntries = [];         // letzte bis zu 16 Trainings, entries[0] = neuestes
+let historyIndex   = 0;          // 0 = neuestes, größer = älter
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -68,9 +118,10 @@ function usernameToEmail(u) {
 
 function displayName(email) {
   if (!email) return "";
-  const local = email.split("@")[0];
-  // sihinghauke → SihingHauke; sihingsoenke → SihingSoenke
-  return local.charAt(0).toUpperCase() + local.slice(1).replace(/^sihing/i, "Sihing");
+  const local = email.split("@")[0].toLowerCase();
+  if (local === "sihinghauke")  return "SihingHauke";
+  if (local === "sihingsoenke") return "SihingSoenke";
+  return local.charAt(0).toUpperCase() + local.slice(1);
 }
 
 function fmtDate(iso) {
@@ -88,13 +139,21 @@ function clearError(node) {
   node.hidden = true;
 }
 
+// Der andere Trainer — wir haben genau zwei Konten.
+function authorFor(userId) {
+  if (currentUser && currentUser.id === userId) return currentUser.name;
+  if (currentUser) {
+    return currentUser.name === "SihingHauke" ? "SihingSoenke" : "SihingHauke";
+  }
+  return "Trainer";
+}
+
 // ─── Auth ──────────────────────────────────────────────────────────────────
 
 async function checkSession() {
   const { data } = await supa.auth.getSession();
-  if (data.session) {
-    await enterApp();
-  } else {
+  if (data.session) await enterApp();
+  else {
     el.login.hidden = false;
     el.app.hidden = true;
   }
@@ -118,6 +177,7 @@ el.loginForm.addEventListener("submit", async (e) => {
 
 el.logout.addEventListener("click", async () => {
   await supa.auth.signOut();
+  currentUser = null;
   el.app.hidden = true;
   el.login.hidden = false;
 });
@@ -125,6 +185,14 @@ el.logout.addEventListener("click", async () => {
 async function enterApp() {
   el.login.hidden = true;
   el.app.hidden = false;
+  const { data } = await supa.auth.getUser();
+  if (data.user) {
+    currentUser = {
+      id: data.user.id,
+      email: data.user.email,
+      name: displayName(data.user.email),
+    };
+  }
   await refresh();
 }
 
@@ -160,12 +228,15 @@ async function refresh() {
     return;
   }
 
-  techniques = sortStats(techRes.data);
-  focusAreas = sortStats(focusRes.data);
+  techniques      = sortStats(techRes.data);
+  focusAreas      = sortStats(focusRes.data);
+  historyEntries  = entryRes.data;
+  historyIndex    = 0;
 
-  renderCategoryList(el.techList,  techniques,  selectedTech);
-  renderCategoryList(el.focusList, focusAreas,  selectedFocus);
-  renderLastTraining(entryRes.data);
+  renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
+  renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
+  renderHistory();
+  refreshIcons();
 }
 
 function sortStats(rows) {
@@ -174,7 +245,7 @@ function sortStats(rows) {
   );
 }
 
-function renderCategoryList(root, items, selectedSet) {
+function renderCategoryList(root, items, selectedSet, kind) {
   root.innerHTML = "";
   for (const it of items) {
     const li = document.createElement("li");
@@ -182,10 +253,11 @@ function renderCategoryList(root, items, selectedSet) {
     li.dataset.id = String(it.id);
     li.innerHTML = `
       <span class="cat-check" aria-hidden="true"></span>
+      <i data-lucide="${iconFor(kind, it.name)}" class="cat-icon"></i>
       <span class="name"></span>
       <span class="count"></span>
     `;
-    li.querySelector(".name").textContent = it.name;
+    li.querySelector(".name").textContent  = it.name;
     li.querySelector(".count").textContent = it.usage_count;
     li.addEventListener("click", () => {
       if (selectedSet.has(it.id)) selectedSet.delete(it.id);
@@ -196,8 +268,10 @@ function renderCategoryList(root, items, selectedSet) {
   }
 }
 
-async function renderLastTraining(entries) {
-  if (!entries.length) {
+// ─── Letztes Training + History-Navigation ─────────────────────────────────
+
+function renderHistory() {
+  if (!historyEntries.length) {
     el.lastTraining.hidden = true;
     el.noTraining.hidden = false;
     return;
@@ -205,59 +279,82 @@ async function renderLastTraining(entries) {
   el.noTraining.hidden = true;
   el.lastTraining.hidden = false;
 
-  const last = entries[0];
+  if (historyIndex >= historyEntries.length) historyIndex = historyEntries.length - 1;
+  if (historyIndex < 0) historyIndex = 0;
 
-  // Autor-Anzeige: hole E-Mail aus auth.users über einen kleinen Umweg.
-  // Wir haben keinen Profil-Table, aber wir kennen unseren eigenen User
-  // (via getUser) und die Konvention SihingHauke / SihingSoenke.
-  // Für andere IDs fallen wir zurück auf "Trainer".
-  const { data: userData } = await supa.auth.getUser();
-  let author = "Trainer";
-  if (userData.user && userData.user.id === last.user_id) {
-    author = displayName(userData.user.email);
-  } else {
-    // Wir wissen: es gibt nur 2 Nutzer. Der andere ist folglich der jeweils andere Name.
-    if (userData.user) {
-      const me = displayName(userData.user.email);
-      author = me.toLowerCase().includes("hauke") ? "SihingSoenke" : "SihingHauke";
-    }
-  }
-  el.lastAuthor.textContent = author;
-  el.lastDate.textContent   = fmtDate(last.created_at);
+  const entry = historyEntries[historyIndex];
 
-  const techNames  = last.entry_techniques
-    .map((r) => techniques.find((t) => t.id === r.technique_id)?.name)
+  el.lastTitle.textContent  = historyIndex === 0
+    ? "Letztes Training"
+    : `Vor ${historyIndex} Trainings`;
+  el.lastAuthor.textContent = authorFor(entry.user_id);
+  el.lastDate.textContent   = fmtDate(entry.created_at);
+
+  el.histIndicator.textContent = `${historyIndex + 1}/${historyEntries.length}`;
+  el.histPrev.disabled = historyIndex === 0;
+  el.histNext.disabled = historyIndex === historyEntries.length - 1;
+
+  const techItems = entry.entry_techniques
+    .map((r) => techniques.find((t) => t.id === r.technique_id))
     .filter(Boolean);
-  const focusNames = last.entry_focus_areas
-    .map((r) => focusAreas.find((f) => f.id === r.focus_area_id)?.name)
+  const focusItems = entry.entry_focus_areas
+    .map((r) => focusAreas.find((f) => f.id === r.focus_area_id))
     .filter(Boolean);
 
-  fillChipList(el.lastTech,  techNames);
-  fillChipList(el.lastFocus, focusNames);
+  fillChipList(el.lastTech,  techItems,  "tech");
+  fillChipList(el.lastFocus, focusItems, "focus");
 
-  if (last.comment && last.comment.trim().length) {
-    el.lastComment.textContent = last.comment;
+  if (entry.comment && entry.comment.trim().length) {
+    el.lastComment.textContent = entry.comment;
     el.lastComment.hidden = false;
   } else {
     el.lastComment.hidden = true;
   }
+
+  refreshIcons();
 }
 
-function fillChipList(root, names) {
+function fillChipList(root, items, kind) {
   root.innerHTML = "";
-  if (!names.length) {
+  if (!items.length) {
     const li = document.createElement("li");
     li.textContent = "–";
     li.style.color = "var(--muted)";
+    li.style.border = "0";
     root.appendChild(li);
     return;
   }
-  for (const n of names) {
+  for (const it of items) {
     const li = document.createElement("li");
-    li.textContent = n;
+    li.innerHTML = `<i data-lucide="${iconFor(kind, it.name)}"></i><span></span>`;
+    li.querySelector("span").textContent = it.name;
     root.appendChild(li);
   }
 }
+
+// Nav-Buttons + Swipe
+el.histPrev.addEventListener("click", () => navigateHistory(-1));
+el.histNext.addEventListener("click", () => navigateHistory(+1));
+
+function navigateHistory(delta) {
+  const next = historyIndex + delta;
+  if (next < 0 || next >= historyEntries.length) return;
+  historyIndex = next;
+  renderHistory();
+}
+
+// Horizontaler Swipe auf der Karte: links = älter, rechts = neuer.
+let touchStartX = 0, touchStartY = 0;
+el.lastTraining.addEventListener("touchstart", (e) => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+}, { passive: true });
+el.lastTraining.addEventListener("touchend", (e) => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  if (Math.abs(dx) < 40 || Math.abs(dy) > Math.abs(dx)) return;
+  navigateHistory(dx < 0 ? +1 : -1);
+}, { passive: true });
 
 // ─── Modal ─────────────────────────────────────────────────────────────────
 
@@ -269,21 +366,23 @@ el.modal.querySelectorAll("[data-close]").forEach((n) =>
 function openModal() {
   clearError(el.modalError);
   el.modalComment.value = "";
-  renderToggleChips(el.modalTech,  techniques,  selectedTech);
-  renderToggleChips(el.modalFocus, focusAreas,  selectedFocus);
+  renderToggleChips(el.modalTech,  techniques,  selectedTech,  "tech");
+  renderToggleChips(el.modalFocus, focusAreas,  selectedFocus, "focus");
   el.modal.hidden = false;
+  refreshIcons();
 }
 function closeModal() {
   el.modal.hidden = true;
 }
 
-function renderToggleChips(root, items, selectedSet) {
+function renderToggleChips(root, items, selectedSet, kind) {
   root.innerHTML = "";
   for (const it of items) {
     const li = document.createElement("li");
-    li.textContent = it.name;
     li.dataset.id = String(it.id);
     li.setAttribute("aria-pressed", selectedSet.has(it.id) ? "true" : "false");
+    li.innerHTML = `<i data-lucide="${iconFor(kind, it.name)}"></i><span></span>`;
+    li.querySelector("span").textContent = it.name;
     li.addEventListener("click", () => {
       if (selectedSet.has(it.id)) selectedSet.delete(it.id);
       else                        selectedSet.add(it.id);
@@ -315,18 +414,18 @@ async function addCategory(table, input, selectedSet, chipsRoot, kind) {
     return;
   }
   input.value = "";
-  // Lokal einfügen mit Count 0 und direkt auswählen
   const row = { id: data.id, name: data.name, usage_count: 0 };
-  if (kind === "tech")  techniques  = sortStats([...techniques,  row]);
-  else                  focusAreas  = sortStats([...focusAreas,  row]);
+  if (kind === "tech") techniques = sortStats([...techniques, row]);
+  else                 focusAreas = sortStats([...focusAreas, row]);
   selectedSet.add(data.id);
+
   renderToggleChips(chipsRoot,
     kind === "tech" ? techniques : focusAreas,
-    selectedSet
+    selectedSet, kind
   );
-  // Auch die Haupt-Kategorienlisten dahinter aktualisieren
-  renderCategoryList(el.techList,  techniques,  selectedTech);
-  renderCategoryList(el.focusList, focusAreas,  selectedFocus);
+  renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
+  renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
+  refreshIcons();
 }
 
 // ─── Speichern ─────────────────────────────────────────────────────────────
@@ -335,8 +434,7 @@ el.saveBtn.addEventListener("click", async () => {
   clearError(el.modalError);
   el.saveBtn.disabled = true;
 
-  const { data: userData, error: userErr } = await supa.auth.getUser();
-  if (userErr || !userData.user) {
+  if (!currentUser) {
     showError(el.modalError, "Session verloren, bitte neu anmelden.");
     el.saveBtn.disabled = false;
     return;
@@ -344,7 +442,7 @@ el.saveBtn.addEventListener("click", async () => {
 
   const { data: entry, error: entryErr } = await supa
     .from("entries")
-    .insert({ user_id: userData.user.id, comment: el.modalComment.value.trim() || null })
+    .insert({ user_id: currentUser.id, comment: el.modalComment.value.trim() || null })
     .select()
     .single();
 
@@ -367,7 +465,6 @@ el.saveBtn.addEventListener("click", async () => {
     return;
   }
 
-  // Auswahl zurücksetzen, Modal schließen, neu laden
   selectedTech.clear();
   selectedFocus.clear();
   el.saveBtn.disabled = false;
