@@ -25,13 +25,13 @@ create index entries_created_at_idx on entries (created_at desc);
 
 create table entry_techniques (
   entry_id uuid references entries(id) on delete cascade,
-  technique_id bigint references techniques(id) on delete restrict,
+  technique_id bigint references techniques(id) on delete cascade,
   primary key (entry_id, technique_id)
 );
 
 create table entry_focus_areas (
   entry_id uuid references entries(id) on delete cascade,
-  focus_area_id bigint references focus_areas(id) on delete restrict,
+  focus_area_id bigint references focus_areas(id) on delete cascade,
   primary key (entry_id, focus_area_id)
 );
 

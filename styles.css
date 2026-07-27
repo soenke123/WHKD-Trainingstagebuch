@@ -477,11 +477,14 @@ svg.lucide {
 .cat-list .last-date {
   font-size: 0.62rem;
   line-height: 1.1;
-  color: var(--muted);
+  color: var(--col);
+  opacity: 0.75;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
 .cat-list .last-date:empty { display: none; }
+/* Datum nur einblenden, wenn das Element aktuell markiert ist */
+.cat-list li:not([aria-pressed="true"]) .last-date { display: none; }
 
 .cat-list .count {
   flex: 0 0 auto;

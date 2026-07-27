@@ -528,11 +528,16 @@ el.saveBtn.addEventListener("click", async () => {
 });
 
 // ─── Long-Press + Drag-to-Delete ───────────────────────────────────────────
-// Gedrückt halten (~450 ms) auf einem Listen-Element blendet oben eine rote
-// Zone ein. Zieht man das Element hinein und lässt los, wird die Kategorie
-// gelöscht. Da entry_techniques/entry_focus_areas per FK `restrict` schützen,
-// scheitert das Löschen serverseitig, wenn die Kategorie in einem Training
-// verwendet wird — in dem Fall zeigen wir eine freundliche Meldung.
+// Ablauf:
+//   1. Pointerdown auf einem Listen-Element startet einen 450-ms-Timer.
+//   2. Bewegt sich der Finger vorher > 10 px, wird der Timer abgebrochen
+//      (dann interpretieren wir die Geste als Scroll/Tap, nicht als Long-Press).
+//   3. Feuert der Timer, entsteht ein Ghost-Klon am Finger, oben erscheint die
+//      rote Delete-Zone, und wir hängen Move/Up-Listener aufs `document` (nicht
+//      auf das <li>). Zusätzlich sperren wir `touchmove` per preventDefault —
+//      sonst würde Mobile-Safari die Geste weiter als vertikales Scrollen
+//      behandeln und keine Pointermove-Events mehr an uns liefern.
+//   4. Loslassen über der roten Zone → Löschen. Sonst → nur aufräumen.
 
 const LONG_PRESS_MS = 450;
 const MOVE_THRESHOLD = 10;
@@ -542,48 +547,45 @@ let dragState = null;
 function attachLongPressDelete(li, item, kind) {
   let timer = null;
   let startX = 0, startY = 0;
+  let activePointerId = null;
   let didDrag = false;
 
-  const cancelTimer = () => {
+  const clearPre = () => {
     if (timer) { clearTimeout(timer); timer = null; }
+    activePointerId = null;
   };
 
   li.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    didDrag = false;
+    if (activePointerId !== null) return;
+    activePointerId = e.pointerId;
     startX = e.clientX;
     startY = e.clientY;
-    cancelTimer();
+    didDrag = false;
     timer = setTimeout(() => {
       timer = null;
       didDrag = true;
-      startDrag(li, item, kind, e);
+      const pid = activePointerId;
+      activePointerId = null;
+      startDrag(li, item, kind, pid, startX, startY);
     }, LONG_PRESS_MS);
   });
 
   li.addEventListener("pointermove", (e) => {
-    if (timer) {
-      if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_THRESHOLD) cancelTimer();
-      return;
-    }
-    if (dragState && dragState.li === li) {
-      moveDrag(e);
-      e.preventDefault();
-    }
+    if (e.pointerId !== activePointerId || !timer) return;
+    if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_THRESHOLD) clearPre();
   });
 
   li.addEventListener("pointerup", (e) => {
-    cancelTimer();
-    if (dragState && dragState.li === li) endDrag(e);
+    if (e.pointerId === activePointerId) clearPre();
   });
 
-  li.addEventListener("pointercancel", () => {
-    cancelTimer();
-    if (dragState && dragState.li === li) cancelDrag();
+  li.addEventListener("pointercancel", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
   });
 
-  // Verhindert das Toggeln nach Long-Press — Capture-Phase + stopImmediate,
-  // damit der weiter oben registrierte Klick-Toggler nicht mehr feuert.
+  // Klick nach Long-Press unterdrücken — Capture-Phase, damit der weiter
+  // oben registrierte Toggle-Handler nicht mehr feuert.
   li.addEventListener("click", (e) => {
     if (didDrag) {
       e.stopImmediatePropagation();
@@ -593,7 +595,7 @@ function attachLongPressDelete(li, item, kind) {
   }, true);
 }
 
-function startDrag(li, item, kind, e) {
+function startDrag(li, item, kind, pointerId, initialX, initialY) {
   const rect = li.getBoundingClientRect();
   const ghost = li.cloneNode(true);
   ghost.classList.add("cat-ghost");
@@ -608,21 +610,56 @@ function startDrag(li, item, kind, e) {
   el.deleteZone.classList.remove("is-hover");
   refreshIcons();
 
+  const onMove = (e) => {
+    if (e.pointerId !== pointerId) return;
+    e.preventDefault();
+    moveDrag(e.clientX, e.clientY);
+  };
+  const onUp = (e) => {
+    if (e.pointerId !== pointerId) return;
+    finish(e.clientX, e.clientY);
+  };
+  const onCancel = (e) => {
+    if (e.pointerId !== pointerId) return;
+    finish(null, null);
+  };
+  // Blockiert das Scrollen der Seite während der Drag — Mobile-Safari
+  // liefert sonst keine Pointermove-Events mehr, sobald die Geste als
+  // Scroll klassifiziert wurde.
+  const onTouchMove = (e) => e.preventDefault();
+
+  async function finish(x, y) {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onCancel);
+    document.removeEventListener("touchmove", onTouchMove);
+
+    const drop = x !== null && isOverDeleteZone(x, y);
+    const s = dragState;
+    cleanupDrag();
+    if (drop && s) await deleteCategory(s.item, s.kind);
+  }
+
   dragState = {
     li, item, kind, ghost,
-    offsetX: e.clientX - rect.left,
-    offsetY: e.clientY - rect.top,
+    offsetX: initialX - rect.left,
+    offsetY: initialY - rect.top,
   };
-  moveDrag(e);
-  try { li.setPointerCapture(e.pointerId); } catch { /* Safari kann meckern */ }
+  moveDrag(initialX, initialY);
+
+  document.addEventListener("pointermove", onMove, { passive: false });
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onCancel);
+  document.addEventListener("touchmove", onTouchMove, { passive: false });
+
   if (navigator.vibrate) navigator.vibrate(15);
 }
 
-function moveDrag(e) {
+function moveDrag(x, y) {
   const g = dragState.ghost;
-  g.style.left = (e.clientX - dragState.offsetX) + "px";
-  g.style.top  = (e.clientY - dragState.offsetY) + "px";
-  el.deleteZone.classList.toggle("is-hover", isOverDeleteZone(e.clientX, e.clientY));
+  g.style.left = (x - dragState.offsetX) + "px";
+  g.style.top  = (y - dragState.offsetY) + "px";
+  el.deleteZone.classList.toggle("is-hover", isOverDeleteZone(x, y));
 }
 
 function isOverDeleteZone(x, y) {
@@ -630,15 +667,6 @@ function isOverDeleteZone(x, y) {
   const r = el.deleteZone.getBoundingClientRect();
   return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
-
-async function endDrag(e) {
-  const s = dragState;
-  const drop = isOverDeleteZone(e.clientX, e.clientY);
-  cleanupDrag();
-  if (drop) await deleteCategory(s.item, s.kind);
-}
-
-function cancelDrag() { cleanupDrag(); }
 
 function cleanupDrag() {
   if (!dragState) return;
@@ -651,13 +679,18 @@ function cleanupDrag() {
 }
 
 async function deleteCategory(item, kind) {
+  if (item.usage_count > 0) {
+    const noun = kind === "tech" ? "Technik" : "Schwerpunkt";
+    const ok = confirm(
+      `${noun} „${item.name}" wurde ${item.usage_count}× trainiert.\n\n` +
+      `Wirklich löschen? Sie verschwindet dann auch aus allen bisherigen Trainings.`
+    );
+    if (!ok) return;
+  }
   const table = kind === "tech" ? "techniques" : "focus_areas";
   const { error } = await supa.from(table).delete().eq("id", item.id);
   if (error) {
-    const friendly = /foreign key|violates/i.test(error.message)
-      ? `„${item.name}" wurde schon trainiert und kann nicht gelöscht werden.`
-      : `Konnte „${item.name}" nicht löschen: ${error.message}`;
-    showToast(friendly, 3500);
+    showToast(`Konnte „${item.name}" nicht löschen: ${error.message}`, 3500);
     return;
   }
   if (kind === "tech") selectedTech.delete(item.id);
