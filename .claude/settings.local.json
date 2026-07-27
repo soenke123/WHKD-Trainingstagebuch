@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.whkd-kung-fu-kiel.de)",
+      "Bash(python *)",
+      "PowerShell(gen *)"
+    ]
+  }
+}

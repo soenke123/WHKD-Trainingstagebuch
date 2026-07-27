@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#c00c1c" />
+  <title>WHKD Trainingstagebuch</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ─── Login-Screen ─────────────────────────────────────────────────── -->
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <h1 class="brand"><span class="brand-mark">WHKD</span> Trainingstagebuch</h1>
+      <form id="login-form" autocomplete="on">
+        <label>
+          Benutzername
+          <input type="text" id="login-username" autocapitalize="off" autocomplete="username" required />
+        </label>
+        <label>
+          Passwort
+          <input type="password" id="login-password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="btn-primary">Anmelden</button>
+        <p id="login-error" class="error" hidden></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ─── App ─────────────────────────────────────────────────────────── -->
+  <main id="app" class="app" hidden>
+
+    <header class="topbar">
+      <h1 class="brand"><span class="brand-mark">WHKD</span> Trainingstagebuch</h1>
+      <button id="logout-btn" class="btn-ghost" title="Abmelden">Logout</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" role="tab" aria-selected="true"  data-tab="tagebuch">Tagebuch</button>
+      <button class="tab"           role="tab" aria-selected="false" data-tab="dashboard">Dashboard</button>
+    </nav>
+
+    <!-- ─── Tab: Tagebuch ────────────────────────────────────────────── -->
+    <section id="tab-tagebuch" class="tab-panel" role="tabpanel">
+
+      <article id="last-training" class="last-training" hidden>
+        <header class="last-training-head">
+          <span class="last-training-title">Letztes Training</span>
+          <span class="last-training-meta">
+            <span id="last-author"></span> · <span id="last-date"></span>
+          </span>
+        </header>
+        <div class="last-cols">
+          <div>
+            <h3>Techniken</h3>
+            <ul id="last-techniques" class="chips"></ul>
+          </div>
+          <div>
+            <h3>Schwerpunkt</h3>
+            <ul id="last-focus" class="chips"></ul>
+          </div>
+        </div>
+        <p id="last-comment" class="last-comment" hidden></p>
+      </article>
+
+      <p id="no-training" class="empty" hidden>Noch kein Training festgehalten. Tippe unten auf <b>+</b>.</p>
+
+      <section class="cats">
+        <div class="cats-col">
+          <h2>Techniken</h2>
+          <ul id="tech-list" class="cat-list"></ul>
+        </div>
+        <div class="cats-col">
+          <h2>Schwerpunkte</h2>
+          <ul id="focus-list" class="cat-list"></ul>
+        </div>
+      </section>
+
+    </section>
+
+    <!-- ─── Tab: Dashboard (Platzhalter) ─────────────────────────────── -->
+    <section id="tab-dashboard" class="tab-panel" role="tabpanel" hidden>
+      <p class="empty">Dashboard folgt später.</p>
+    </section>
+
+    <!-- ─── Floating Add Button ──────────────────────────────────────── -->
+    <button id="fab" class="fab" aria-label="Neuen Eintrag hinzufügen">+</button>
+
+  </main>
+
+  <!-- ─── Modal: neuer Eintrag ─────────────────────────────────────────── -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal-head">
+        <h2 id="modal-title">Neues Training</h2>
+        <button class="btn-ghost" data-close aria-label="Schließen">✕</button>
+      </header>
+
+      <div class="modal-body">
+
+        <section class="modal-section">
+          <h3>Techniken</h3>
+          <ul id="modal-tech-chips" class="chips chips-toggle"></ul>
+          <form id="new-tech-form" class="inline-add">
+            <input type="text" id="new-tech-input" placeholder="+ neue Technik" />
+            <button type="submit" class="btn-ghost">Hinzufügen</button>
+          </form>
+        </section>
+
+        <section class="modal-section">
+          <h3>Schwerpunkte</h3>
+          <ul id="modal-focus-chips" class="chips chips-toggle"></ul>
+          <form id="new-focus-form" class="inline-add">
+            <input type="text" id="new-focus-input" placeholder="+ neuer Schwerpunkt" />
+            <button type="submit" class="btn-ghost">Hinzufügen</button>
+          </form>
+        </section>
+
+        <section class="modal-section">
+          <label class="stack">
+            Kommentar
+            <textarea id="modal-comment" rows="3" placeholder="optional"></textarea>
+          </label>
+        </section>
+
+        <p id="modal-error" class="error" hidden></p>
+
+      </div>
+
+      <footer class="modal-foot">
+        <button class="btn-ghost"   data-close>Abbrechen</button>
+        <button id="save-btn" class="btn-primary">Speichern</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Supabase SDK per CDN, dann Config, dann App -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
