@@ -192,6 +192,24 @@
     </div>
   </div>
 
+  <!-- ─── Modal: Löschen bestätigen ──────────────────────────────────── -->
+  <div id="confirm-modal" class="modal confirm-modal" hidden>
+    <div class="modal-backdrop" data-confirm-cancel></div>
+    <div class="modal-sheet confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <header class="modal-head confirm-head">
+        <span class="confirm-icon" aria-hidden="true"><i data-lucide="trash-2"></i></span>
+        <h2 id="confirm-title">Löschen?</h2>
+      </header>
+      <div class="modal-body confirm-body">
+        <p id="confirm-message"></p>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn-ghost" data-confirm-cancel>Abbrechen</button>
+        <button type="button" id="confirm-ok" class="btn-danger">Löschen</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- Supabase SDK, Lucide-Icons, Config, App -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>

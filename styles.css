@@ -106,6 +106,24 @@ svg.lucide {
 }
 .btn-ghost:hover { background: var(--surface); }
 
+.btn-danger {
+  background: #b23a48;
+  color: #fff;
+  border: 0;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  min-height: 44px;
+  transition: background 0.15s ease;
+}
+.btn-danger:hover  { background: #8a1c2c; }
+.btn-danger:active { transform: translateY(1px); }
+.btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
+
 /* ─── Login ───────────────────────────────────────────────────────────── */
 
 .login {
@@ -750,6 +768,40 @@ body.is-dragging * { -webkit-user-select: none; user-select: none; }
 }
 .cat-ghost .cat-check { display: none; }
 
+.last-training.is-dragging { opacity: 0.35; }
+
+.entry-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 199;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  box-shadow: 0 12px 28px rgba(26, 39, 68, 0.25);
+  opacity: 0.95;
+  transform: rotate(-2deg);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 170px;
+}
+.entry-ghost-title {
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+}
+.entry-ghost-meta {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
 .toast {
   position: fixed;
   bottom: calc(90px + env(safe-area-inset-bottom));
@@ -767,6 +819,74 @@ body.is-dragging * { -webkit-user-select: none; user-select: none; }
   animation: toastIn 0.15s ease-out;
 }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 6px) } to { opacity: 1; transform: translate(-50%, 0) } }
+
+/* ─── Confirm-Modal (zentriert, klein, „Löschen?") ────────────────────── */
+
+.confirm-modal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  grid-template-rows: none;
+  z-index: 400;
+}
+.confirm-sheet {
+  max-width: 340px;
+  width: 100%;
+  border-radius: 8px;
+  max-height: none;
+  grid-template-rows: auto auto auto;
+  animation: confirmIn 0.18s ease-out;
+}
+@keyframes confirmIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.confirm-head {
+  gap: 10px;
+  justify-content: flex-start;
+  padding: 16px 18px 12px;
+}
+.confirm-head h2 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--fg);
+}
+.confirm-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, #b23a48 12%, transparent);
+  color: #b23a48;
+  flex-shrink: 0;
+}
+.confirm-icon svg { width: 16px; height: 16px; }
+
+.confirm-body {
+  padding: 4px 18px 16px;
+}
+.confirm-body p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.confirm-body p strong {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.confirm-modal .modal-foot {
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+}
+.confirm-modal .modal-foot .btn-ghost   { flex: 1; }
+.confirm-modal .modal-foot .btn-danger  { flex: 1; }
 
 /* ─── Dashboard: Section-Cards ────────────────────────────────────────── */
 

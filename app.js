@@ -101,6 +101,11 @@ const el = {
   newTechInput:  $("new-tech-input"),
   newFocusForm:  $("new-focus-form"),
   newFocusInput: $("new-focus-input"),
+
+  confirmModal:  $("confirm-modal"),
+  confirmTitle:  $("confirm-title"),
+  confirmMsg:    $("confirm-message"),
+  confirmOk:     $("confirm-ok"),
 };
 
 // ─── State ─────────────────────────────────────────────────────────────────
@@ -147,6 +152,57 @@ function showToast(msg, ms = 2600) {
   el.toast.hidden = false;
   clearTimeout(el.toast._t);
   el.toast._t = setTimeout(() => { el.toast.hidden = true; }, ms);
+}
+
+// Gestylter Confirm-Dialog. Nimmt Klartext für Titel + Body; Fragmente werden
+// mit textContent gesetzt (kein HTML-Escaping nötig, Kategorienamen sind sicher).
+// Rückgabe: Promise<boolean> — true = bestätigt, false = abgebrochen.
+function showConfirm({ title = "Löschen?", body = "", subject = "", confirmLabel = "Löschen" }) {
+  return new Promise((resolve) => {
+    el.confirmTitle.textContent = title;
+    el.confirmOk.textContent = confirmLabel;
+
+    // Body zusammensetzen: optional den Subject-Teil fett hervorheben,
+    // ohne HTML-Injection zu riskieren.
+    el.confirmMsg.textContent = "";
+    if (subject) {
+      const strong = document.createElement("strong");
+      strong.textContent = subject;
+      el.confirmMsg.appendChild(strong);
+      if (body) el.confirmMsg.appendChild(document.createTextNode(" " + body));
+    } else {
+      el.confirmMsg.textContent = body;
+    }
+
+    el.confirmModal.hidden = false;
+    refreshIcons();
+
+    let done = false;
+    const cancels = el.confirmModal.querySelectorAll("[data-confirm-cancel]");
+
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      el.confirmModal.hidden = true;
+      el.confirmOk.removeEventListener("click", onOk);
+      cancels.forEach((n) => n.removeEventListener("click", onCancel));
+      document.removeEventListener("keydown", onKey);
+      resolve(result);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); finish(false); }
+      if (e.key === "Enter")  { e.preventDefault(); finish(true);  }
+    };
+
+    el.confirmOk.addEventListener("click", onOk);
+    cancels.forEach((n) => n.addEventListener("click", onCancel));
+    document.addEventListener("keydown", onKey);
+
+    // Fokus auf den Löschen-Button, damit Enter direkt wirkt.
+    setTimeout(() => el.confirmOk.focus(), 30);
+  });
 }
 
 // Wert für <input type="datetime-local"> — lokale Zeit ohne TZ-Suffix.
@@ -416,17 +472,163 @@ function navigateHistory(delta) {
 }
 
 // Horizontaler Swipe auf der Karte: links = älter, rechts = neuer.
+// `entryLongPressFired` wird beim Start eines Drag-Gestures gesetzt und
+// unterdrückt das anschließende Swipe-touchend — sonst würde das Loslassen
+// nach einem Drag als „Wisch" interpretiert und die History mitverschieben.
 let touchStartX = 0, touchStartY = 0;
+let entryLongPressFired = false;
 el.lastTraining.addEventListener("touchstart", (e) => {
   touchStartX = e.touches[0].clientX;
   touchStartY = e.touches[0].clientY;
+  entryLongPressFired = false;
 }, { passive: true });
 el.lastTraining.addEventListener("touchend", (e) => {
+  if (entryLongPressFired) { entryLongPressFired = false; return; }
   const dx = e.changedTouches[0].clientX - touchStartX;
   const dy = e.changedTouches[0].clientY - touchStartY;
   if (Math.abs(dx) < 40 || Math.abs(dy) > Math.abs(dx)) return;
   navigateHistory(dx < 0 ? +1 : -1);
 }, { passive: true });
+
+// Long-Press auf der Karte → Drag-to-Delete für den aktuell sichtbaren Eintrag.
+attachEntryLongPressDelete();
+
+function attachEntryLongPressDelete() {
+  const card = el.lastTraining;
+  let timer = null;
+  let startX = 0, startY = 0;
+  let activePointerId = null;
+
+  const clearPre = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    activePointerId = null;
+  };
+
+  card.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (activePointerId !== null) return;
+    // Klicks auf die History-Navigation nicht als Long-Press interpretieren.
+    if (e.target.closest(".hist-btn")) return;
+    activePointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    timer = setTimeout(() => {
+      timer = null;
+      const pid = activePointerId;
+      activePointerId = null;
+      const entry = historyEntries[historyIndex];
+      if (!entry) return;
+      entryLongPressFired = true;
+      startEntryDrag(entry, pid, startX, startY);
+    }, LONG_PRESS_MS);
+  });
+
+  card.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId || !timer) return;
+    if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_THRESHOLD) clearPre();
+  });
+  card.addEventListener("pointerup", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
+  });
+  card.addEventListener("pointercancel", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
+  });
+}
+
+function startEntryDrag(entry, pointerId, initialX, initialY) {
+  const author = authorFor(entry.user_id);
+  const dateStr = fmtDate(entry.created_at);
+
+  const ghost = document.createElement("div");
+  ghost.className = "entry-ghost";
+  ghost.innerHTML =
+    `<span class="entry-ghost-title">Training</span>` +
+    `<span class="entry-ghost-meta"></span>`;
+  ghost.querySelector(".entry-ghost-meta").textContent = `${author} · ${dateStr}`;
+  document.body.appendChild(ghost);
+
+  el.lastTraining.classList.add("is-dragging");
+  document.body.classList.add("is-dragging");
+  el.deleteZone.hidden = false;
+  el.deleteZone.classList.remove("is-hover");
+  refreshIcons();
+
+  // Ghost so verschieben, dass die linke obere Kante etwas links über dem
+  // Finger sitzt — analog zum Kategorie-Drag, aber ohne echte Element-Rects.
+  const offsetX = 40;
+  const offsetY = 20;
+  const place = (x, y) => {
+    ghost.style.left = (x - offsetX) + "px";
+    ghost.style.top  = (y - offsetY) + "px";
+    el.deleteZone.classList.toggle("is-hover", isOverDeleteZone(x, y));
+  };
+  place(initialX, initialY);
+
+  const onMove = (e) => {
+    if (e.pointerId !== pointerId) return;
+    e.preventDefault();
+    place(e.clientX, e.clientY);
+  };
+  const onUp = async (e) => {
+    if (e.pointerId !== pointerId) return;
+    const drop = isOverDeleteZone(e.clientX, e.clientY);
+    cleanup();
+    if (drop) await deleteEntry(entry);
+  };
+  const onCancel = (e) => {
+    if (e.pointerId !== pointerId) return;
+    cleanup();
+  };
+  // Ohne preventDefault würde Mobile-Safari die Geste als Scroll klassifizieren
+  // und keine Pointermove-Events mehr liefern.
+  const onTouchMove = (e) => e.preventDefault();
+
+  function cleanup() {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onCancel);
+    document.removeEventListener("touchmove", onTouchMove);
+    ghost.remove();
+    el.lastTraining.classList.remove("is-dragging");
+    document.body.classList.remove("is-dragging");
+    el.deleteZone.hidden = true;
+    el.deleteZone.classList.remove("is-hover");
+  }
+
+  document.addEventListener("pointermove", onMove, { passive: false });
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onCancel);
+  document.addEventListener("touchmove", onTouchMove, { passive: false });
+
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+async function deleteEntry(entry) {
+  if (!currentUser) return;
+  // RLS erlaubt Löschen nur für den Autor — hier vorab prüfen, um dem User
+  // einen freundlichen Hinweis statt einer stummen No-Op zu geben.
+  if (entry.user_id !== currentUser.id) {
+    showToast("Nur der Autor kann dieses Training löschen.", 3200);
+    return;
+  }
+
+  const dateStr = fmtDate(entry.created_at);
+  const ok = await showConfirm({
+    title:        "Training löschen?",
+    subject:      `Das Training vom ${dateStr}`,
+    body:         "wird endgültig entfernt.",
+    confirmLabel: "Löschen",
+  });
+  if (!ok) return;
+
+  const { error } = await supa.from("entries").delete().eq("id", entry.id);
+  if (error) {
+    showToast(`Konnte Training nicht löschen: ${error.message}`, 3500);
+    return;
+  }
+  showToast("Training gelöscht.");
+  await refresh();
+}
 
 // ─── Modal ─────────────────────────────────────────────────────────────────
 
@@ -714,14 +916,18 @@ function cleanupDrag() {
 }
 
 async function deleteCategory(item, kind) {
-  if (item.usage_count > 0) {
-    const noun = kind === "tech" ? "Technik" : "Schwerpunkt";
-    const ok = confirm(
-      `${noun} „${item.name}" wurde ${item.usage_count}× trainiert.\n\n` +
-      `Wirklich löschen? Sie verschwindet dann auch aus allen bisherigen Trainings.`
-    );
-    if (!ok) return;
-  }
+  const noun = kind === "tech" ? "Technik" : "Schwerpunkt";
+  const body = item.usage_count > 0
+    ? `wurde ${item.usage_count}× trainiert und verschwindet aus allen bisherigen Trainings.`
+    : `wird endgültig entfernt.`;
+  const ok = await showConfirm({
+    title:        `${noun} löschen?`,
+    subject:      `„${item.name}"`,
+    body,
+    confirmLabel: "Löschen",
+  });
+  if (!ok) return;
+
   const table = kind === "tech" ? "techniques" : "focus_areas";
   const { error } = await supa.from(table).delete().eq("id", item.id);
   if (error) {

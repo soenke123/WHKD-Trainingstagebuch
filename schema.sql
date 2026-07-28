@@ -200,12 +200,16 @@ create policy school_insert on focus_areas
 create policy school_delete on focus_areas
   for delete to authenticated using (school_id = my_school_id());
 
--- entries: eigene Schule lesen; eigene Schule + eigener user_id schreiben
+-- entries: eigene Schule lesen; eigene Schule + eigener user_id schreiben;
+-- löschen darf nur der Autor selbst (nicht Kollegen der Schule).
 create policy school_read on entries
   for select to authenticated using (school_id = my_school_id());
 create policy school_insert on entries
   for insert to authenticated
   with check (school_id = my_school_id() and user_id = auth.uid());
+create policy school_delete on entries
+  for delete to authenticated
+  using (school_id = my_school_id() and user_id = auth.uid());
 
 -- Join-Tabellen: filtern über den Parent-Entry
 create policy school_read on entry_techniques
