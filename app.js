@@ -310,6 +310,9 @@ el.logout.addEventListener("click", async () => {
 async function enterApp() {
   el.login.hidden = true;
   el.app.hidden = false;
+  // Statische Icons (z.B. History-Pfeile) direkt rendern — nicht auf refresh()
+  // warten, das kann durch eine DB-Query blockiert werden.
+  refreshIcons();
   const { data } = await supa.auth.getUser();
   if (!data.user) return;
 
