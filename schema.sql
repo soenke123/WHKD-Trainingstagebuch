@@ -40,6 +40,7 @@ create table techniques (
   id bigserial primary key,
   school_id bigint not null references schools(id) on delete cascade,
   name text not null,
+  icon text,                       -- optionales Emoji; wenn leer → Lucide-Fallback
   created_at timestamptz default now(),
   unique (school_id, name)
 );
@@ -49,6 +50,7 @@ create table focus_areas (
   id bigserial primary key,
   school_id bigint not null references schools(id) on delete cascade,
   name text not null,
+  icon text,                       -- optionales Emoji; wenn leer → Lucide-Fallback
   created_at timestamptz default now(),
   unique (school_id, name)
 );
@@ -116,23 +118,23 @@ create trigger set_school_id before insert on entries
 
 create view technique_stats
 with (security_invoker = true) as
-  select t.id, t.school_id, t.name,
+  select t.id, t.school_id, t.name, t.icon,
          count(et.entry_id)::int as usage_count,
          max(e.created_at)       as last_used_at
   from techniques t
   left join entry_techniques et on et.technique_id = t.id
   left join entries e            on e.id = et.entry_id
-  group by t.id, t.school_id, t.name;
+  group by t.id, t.school_id, t.name, t.icon;
 
 create view focus_area_stats
 with (security_invoker = true) as
-  select f.id, f.school_id, f.name,
+  select f.id, f.school_id, f.name, f.icon,
          count(ef.entry_id)::int as usage_count,
          max(e.created_at)       as last_used_at
   from focus_areas f
   left join entry_focus_areas ef on ef.focus_area_id = f.id
   left join entries e            on e.id = ef.entry_id
-  group by f.id, f.school_id, f.name;
+  group by f.id, f.school_id, f.name, f.icon;
 
 -- ─── bootstrap_school: neue Schule + Standard-Katalog + leere Sections ────
 -- Aufruf im SQL-Editor: `select bootstrap_school('hamburg', 'Hamburg');`

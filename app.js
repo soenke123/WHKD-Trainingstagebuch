@@ -46,9 +46,31 @@ function iconFor(kind, name) {
   return map[name] || "circle";
 }
 
-function refreshIcons() {
-  if (window.lucide) window.lucide.createIcons();
+// Rendert entweder das gespeicherte Emoji (User-Kategorie) oder den passenden
+// Lucide-Fallback (Default-Kategorie). Emoji werden in <span> gesetzt, damit
+// sich User-erstellte Kategorien optisch klar von den Standardeinträgen
+// unterscheiden.
+function iconMarkupFor(kind, item, extraClass = "") {
+  const emoji = (item.icon || "").trim();
+  if (emoji) {
+    return `<span class="emoji-icon ${extraClass}">${escapeHtml(emoji)}</span>`;
+  }
+  return `<i data-lucide="${iconFor(kind, item.name)}" class="${extraClass}"></i>`;
 }
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+// Kandidaten-Emojis für den Icon-Picker im Kategorie-Modal. Bewusst gemischt:
+// Kampfkunst-Motive, Körperregionen und Trainings-Zubehör.
+const EMOJI_SUGGESTIONS = [
+  "🥋", "🥊", "🤼", "🤸", "🥷", "🐉", "🐯", "🦅",
+  "✋", "🤛", "🦵", "🦶", "💪", "🧠", "🫀", "🦴",
+  "⚔️", "🗡️", "🛡️", "🏹", "🎯", "🏋️", "🧘", "🌀",
+];
 
 // ─── DOM-Handles ───────────────────────────────────────────────────────────
 
@@ -99,8 +121,18 @@ const el = {
 
   newTechForm:   $("new-tech-form"),
   newTechInput:  $("new-tech-input"),
+  newTechIcon:   $("new-tech-icon"),
   newFocusForm:  $("new-focus-form"),
   newFocusInput: $("new-focus-input"),
+  newFocusIcon:  $("new-focus-icon"),
+
+  catModal:      $("category-modal"),
+  catNameInput:  $("category-name-input"),
+  catIconInput:  $("category-icon-input"),
+  catError:      $("category-error"),
+  catSave:       $("category-save"),
+  catTitle:      $("category-modal-title"),
+  emojiPicks:    $("emoji-picks"),
 
   confirmModal:  $("confirm-modal"),
   confirmTitle:  $("confirm-title"),
@@ -329,8 +361,8 @@ el.tabButtons.forEach((btn) => {
 
 async function refresh() {
   const [techRes, focusRes, entryRes, secRes, trainerRes] = await Promise.all([
-    supa.from("technique_stats").select("id, name, usage_count, last_used_at"),
-    supa.from("focus_area_stats").select("id, name, usage_count, last_used_at"),
+    supa.from("technique_stats").select("id, name, icon, usage_count, last_used_at"),
+    supa.from("focus_area_stats").select("id, name, icon, usage_count, last_used_at"),
     supa.from("entries")
       .select("id, comment, created_at, user_id, entry_techniques(technique_id), entry_focus_areas(focus_area_id)")
       .order("created_at", { ascending: false })
@@ -376,7 +408,7 @@ function renderCategoryList(root, items, selectedSet, kind) {
     li.dataset.id = String(it.id);
     li.innerHTML = `
       <span class="cat-check" aria-hidden="true"></span>
-      <i data-lucide="${iconFor(kind, it.name)}" class="cat-icon"></i>
+      ${iconMarkupFor(kind, it, "cat-icon")}
       <span class="cat-body">
         <span class="name"></span>
         <span class="last-date"></span>
@@ -394,6 +426,20 @@ function renderCategoryList(root, items, selectedSet, kind) {
     attachLongPressDelete(li, it, kind);
     root.appendChild(li);
   }
+
+  // "+"-Kachel am Ende: öffnet das Kategorie-Modal für diese Spalte.
+  const add = document.createElement("li");
+  add.className = "cat-add";
+  add.setAttribute("role", "button");
+  add.setAttribute("tabindex", "0");
+  add.setAttribute("aria-label", kind === "tech" ? "Neue Technik" : "Neuer Schwerpunkt");
+  add.innerHTML = `<span class="cat-add-plus" aria-hidden="true">+</span>`;
+  const open = () => openCategoryModal(kind);
+  add.addEventListener("click", open);
+  add.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+  });
+  root.appendChild(add);
 }
 
 // ─── Letztes Training + History-Navigation ─────────────────────────────────
@@ -454,7 +500,7 @@ function fillChipList(root, items, kind) {
   }
   for (const it of items) {
     const li = document.createElement("li");
-    li.innerHTML = `<i data-lucide="${iconFor(kind, it.name)}"></i><span></span>`;
+    li.innerHTML = `${iconMarkupFor(kind, it)}<span></span>`;
     li.querySelector("span").textContent = it.name;
     root.appendChild(li);
   }
@@ -665,7 +711,7 @@ function renderToggleChips(root, items, selectedSet, kind) {
     const li = document.createElement("li");
     li.dataset.id = String(it.id);
     li.setAttribute("aria-pressed", selectedSet.has(it.id) ? "true" : "false");
-    li.innerHTML = `<i data-lucide="${iconFor(kind, it.name)}"></i><span></span>`;
+    li.innerHTML = `${iconMarkupFor(kind, it)}<span></span>`;
     li.querySelector("span").textContent = it.name;
     li.addEventListener("click", () => {
       if (selectedSet.has(it.id)) selectedSet.delete(it.id);
@@ -680,37 +726,134 @@ function renderToggleChips(root, items, selectedSet, kind) {
 
 el.newTechForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  await addCategory("techniques", el.newTechInput, selectedTech, el.modalTech, "tech");
+  await addCategoryInline("techniques", el.newTechInput, el.newTechIcon, selectedTech, el.modalTech, "tech");
 });
 el.newFocusForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  await addCategory("focus_areas", el.newFocusInput, selectedFocus, el.modalFocus, "focus");
+  await addCategoryInline("focus_areas", el.newFocusInput, el.newFocusIcon, selectedFocus, el.modalFocus, "focus");
 });
 
-async function addCategory(table, input, selectedSet, chipsRoot, kind) {
-  const name = input.value.trim();
+// Aus dem Tagebuch-Modal heraus: neue Kategorie mit optionalem Emoji anlegen
+// und im aktuellen Modal direkt vorauswählen.
+async function addCategoryInline(table, nameInput, iconInput, selectedSet, chipsRoot, kind) {
+  const name = nameInput.value.trim();
+  const icon = (iconInput.value || "").trim();
   if (!name) return;
   clearError(el.modalError);
 
-  const { data, error } = await supa.from(table).insert({ name }).select().single();
-  if (error) {
-    showError(el.modalError, `Konnte "${name}" nicht anlegen: ${error.message}`);
+  const err = await insertCategory(table, name, icon, kind);
+  if (err) {
+    showError(el.modalError, `Konnte "${name}" nicht anlegen: ${err.message}`);
     return;
   }
-  input.value = "";
-  const row = { id: data.id, name: data.name, usage_count: 0 };
-  if (kind === "tech") techniques = sortStats([...techniques, row]);
-  else                 focusAreas = sortStats([...focusAreas, row]);
-  selectedSet.add(data.id);
+  nameInput.value = "";
+  iconInput.value = "";
 
-  renderToggleChips(chipsRoot,
-    kind === "tech" ? techniques : focusAreas,
-    selectedSet, kind
-  );
-  renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
-  renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
+  const list = kind === "tech" ? techniques : focusAreas;
+  const created = list.find((it) => it.name === name);
+  if (created) selectedSet.add(created.id);
+
+  renderToggleChips(chipsRoot, list, selectedSet, kind);
   refreshIcons();
 }
+
+// Insert + lokalen State aktualisieren + Listen neu rendern. Wird sowohl vom
+// Inline-Formular als auch vom Kategorie-Modal (+ am Ende der Liste) genutzt.
+async function insertCategory(table, name, icon, kind) {
+  const payload = { name };
+  if (icon) payload.icon = icon;
+
+  const { data, error } = await supa.from(table).insert(payload).select().single();
+  if (error) return error;
+
+  const row = {
+    id: data.id,
+    name: data.name,
+    icon: data.icon || null,
+    usage_count: 0,
+    last_used_at: null,
+  };
+  if (kind === "tech") techniques = sortStats([...techniques, row]);
+  else                 focusAreas = sortStats([...focusAreas, row]);
+
+  renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
+  renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
+  return null;
+}
+
+// ─── Kategorie-Modal (das + am Ende der Kategorielisten) ───────────────────
+
+let categoryContext = null;  // { kind: 'tech' | 'focus' }
+
+function openCategoryModal(kind) {
+  categoryContext = { kind };
+  el.catTitle.textContent = kind === "tech" ? "Neue Technik" : "Neuer Schwerpunkt";
+  el.catNameInput.value = "";
+  el.catIconInput.value = "";
+  clearError(el.catError);
+  renderEmojiPicks();
+  el.catModal.hidden = false;
+  refreshIcons();
+  setTimeout(() => el.catNameInput.focus(), 30);
+}
+
+function closeCategoryModal() {
+  el.catModal.hidden = true;
+  categoryContext = null;
+}
+
+function renderEmojiPicks() {
+  el.emojiPicks.innerHTML = "";
+  for (const e of EMOJI_SUGGESTIONS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "emoji-pick";
+    btn.textContent = e;
+    btn.setAttribute("aria-label", `Icon ${e}`);
+    btn.addEventListener("click", () => {
+      el.catIconInput.value = e;
+      updateEmojiPicksSelection();
+    });
+    el.emojiPicks.appendChild(btn);
+  }
+  updateEmojiPicksSelection();
+}
+
+function updateEmojiPicksSelection() {
+  const current = (el.catIconInput.value || "").trim();
+  el.emojiPicks.querySelectorAll(".emoji-pick").forEach((btn) => {
+    btn.setAttribute("aria-pressed", btn.textContent === current ? "true" : "false");
+  });
+}
+
+el.catModal.querySelectorAll("[data-cat-close]").forEach((n) =>
+  n.addEventListener("click", closeCategoryModal)
+);
+el.catIconInput.addEventListener("input", updateEmojiPicksSelection);
+el.catNameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); el.catSave.click(); }
+});
+
+el.catSave.addEventListener("click", async () => {
+  if (!categoryContext) return;
+  const name = el.catNameInput.value.trim();
+  const icon = (el.catIconInput.value || "").trim();
+  if (!name) {
+    showError(el.catError, "Bitte einen Namen eingeben.");
+    return;
+  }
+  clearError(el.catError);
+  el.catSave.disabled = true;
+  const table = categoryContext.kind === "tech" ? "techniques" : "focus_areas";
+  const err = await insertCategory(table, name, icon, categoryContext.kind);
+  el.catSave.disabled = false;
+  if (err) {
+    showError(el.catError, `Konnte "${name}" nicht anlegen: ${err.message}`);
+    return;
+  }
+  closeCategoryModal();
+  refreshIcons();
+});
 
 // ─── Speichern ─────────────────────────────────────────────────────────────
 

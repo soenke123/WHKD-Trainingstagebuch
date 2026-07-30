@@ -137,6 +137,7 @@
           <h3>Techniken</h3>
           <ul id="modal-tech-chips" class="chips chips-toggle"></ul>
           <form id="new-tech-form" class="inline-add">
+            <input type="text" id="new-tech-icon" class="inline-icon" placeholder="🙂" maxlength="8" aria-label="Icon (optional)" />
             <input type="text" id="new-tech-input" placeholder="+ neue Technik" />
             <button type="submit" class="btn-ghost">Hinzufügen</button>
           </form>
@@ -146,6 +147,7 @@
           <h3>Schwerpunkte</h3>
           <ul id="modal-focus-chips" class="chips chips-toggle"></ul>
           <form id="new-focus-form" class="inline-add">
+            <input type="text" id="new-focus-icon" class="inline-icon" placeholder="🙂" maxlength="8" aria-label="Icon (optional)" />
             <input type="text" id="new-focus-input" placeholder="+ neuer Schwerpunkt" />
             <button type="submit" class="btn-ghost">Hinzufügen</button>
           </form>
@@ -189,6 +191,30 @@
       <div class="modal-body editor-body">
         <div id="editor" class="rich-content editor" contenteditable="true" spellcheck="true"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ─── Modal: neue Kategorie anlegen (via + in Kategorielisten) ──── -->
+  <div id="category-modal" class="modal category-modal" hidden>
+    <div class="modal-backdrop" data-cat-close></div>
+    <div class="modal-sheet category-sheet" role="dialog" aria-modal="true" aria-labelledby="category-modal-title">
+      <header class="modal-head">
+        <h2 id="category-modal-title">Neue Kategorie</h2>
+        <button class="btn-ghost" data-cat-close aria-label="Schließen">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="cat-form-row">
+          <input type="text" id="category-icon-input" class="cat-icon-input" placeholder="🙂" maxlength="8" aria-label="Icon" />
+          <input type="text" id="category-name-input" class="cat-name-input" placeholder="Name" maxlength="40" />
+        </div>
+        <p class="cat-hint">Emoji tippen oder unten auswählen — als Icon, damit du eigene Kategorien vom Standard unterscheiden kannst.</p>
+        <div id="emoji-picks" class="emoji-picks" role="listbox" aria-label="Icon-Vorschläge"></div>
+        <p id="category-error" class="error" hidden></p>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn-ghost" data-cat-close>Abbrechen</button>
+        <button type="button" id="category-save" class="btn-primary">Hinzufügen</button>
+      </footer>
     </div>
   </div>
 
