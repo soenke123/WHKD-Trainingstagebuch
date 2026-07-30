@@ -256,6 +256,37 @@
     </div>
   </div>
 
+  <!-- ─── Modal: neuen Notizblock anlegen ──────────────────────────── -->
+  <div id="section-modal" class="modal category-modal" hidden>
+    <div class="modal-backdrop" data-section-close></div>
+    <div class="modal-sheet category-sheet" role="dialog" aria-modal="true" aria-labelledby="section-modal-title">
+      <header class="modal-head">
+        <h2 id="section-modal-title">Neuer Notizblock</h2>
+        <button class="btn-ghost" data-section-close aria-label="Schließen">✕</button>
+      </header>
+      <div class="modal-body">
+        <input type="text" id="section-name-input" class="cat-name-input" placeholder="Name (z.B. Prüfungen Frühjahr)" maxlength="40" />
+        <p class="cat-hint">Sichtbar für …</p>
+        <div class="section-scope-picks" role="radiogroup" aria-label="Sichtbarkeit">
+          <button type="button" class="section-scope-pick is-active" data-scope="course" role="radio" aria-checked="true">
+            <i data-lucide="graduation-cap" aria-hidden="true"></i>
+            <span>Nur dieser Kurs</span>
+          </button>
+          <button type="button" class="section-scope-pick" data-scope="global" role="radio" aria-checked="false">
+            <i data-lucide="globe" aria-hidden="true"></i>
+            <span>Ganze Schule</span>
+          </button>
+        </div>
+        <p class="cat-hint">Name und Sichtbarkeit lassen sich nachträglich nicht mehr ändern.</p>
+        <p id="section-error" class="error" hidden></p>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn-ghost" data-section-close>Abbrechen</button>
+        <button type="button" id="section-save" class="btn-primary">Anlegen</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- ─── Modal: Löschen bestätigen ──────────────────────────────────── -->
   <div id="confirm-modal" class="modal confirm-modal" hidden>
     <div class="modal-backdrop" data-confirm-cancel></div>

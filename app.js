@@ -171,6 +171,12 @@ const el = {
   courseColorPicks: $("course-color-picks"),
   courseError:      $("course-error"),
   courseSave:       $("course-save"),
+
+  sectionModal:      $("section-modal"),
+  sectionNameInput:  $("section-name-input"),
+  sectionScopePicks: document.querySelector(".section-scope-picks"),
+  sectionError:      $("section-error"),
+  sectionSave:       $("section-save"),
 };
 
 el.courseSwitchDot = el.courseSwitcher.querySelector(".course-dot");
@@ -453,7 +459,11 @@ async function refresh() {
       .eq("course_id", courseId)
       .order("created_at", { ascending: false })
       .limit(16),
-    supa.from("sections").select("slot, title, content, updated_at, updated_by").order("slot"),
+    supa.from("sections")
+      .select("id, course_id, title, content, updated_at, updated_by, created_at")
+      .or(`course_id.is.null,course_id.eq.${courseId}`)
+      .order("course_id", { nullsFirst: true })
+      .order("created_at"),
     supa.from("trainers").select("user_id, slug, display_name, color"),
     supa.from("courses").select("id, slug, name, color").order("created_at"),
   ]);
@@ -1235,7 +1245,7 @@ function colorForSlug(slug) {
 
 // ─── Dashboard: State + DOM ────────────────────────────────────────────────
 
-let sections = [];  // [{slot, title, content, updated_by, updated_at}]
+let sections = [];  // [{id, course_id, title, content, updated_by, updated_at, created_at}]
 
 const dashEl = {
   cards:        $("section-cards"),
@@ -1246,22 +1256,25 @@ const dashEl = {
   editorToolbar: document.querySelector(".editor-toolbar"),
 };
 
-let editorContext = null;  // { slot, originalBlocks: Map<text, authorSlug> }
+let editorContext = null;  // { id, originalBlocks: Map<text, authorSlug> }
 
 // ─── Dashboard: Rendering ──────────────────────────────────────────────────
 
 function renderDashboard() {
   dashEl.cards.innerHTML = "";
   for (const s of sections) {
+    const isGlobal = s.course_id === null || s.course_id === undefined;
     const card = document.createElement("article");
-    card.className = "section-card";
-    card.dataset.slot = String(s.slot);
+    card.className = "section-card " + (isGlobal ? "section-card--global" : "section-card--course");
+    card.dataset.id = String(s.id);
+    const scopeIcon = isGlobal ? "globe" : "graduation-cap";
+    const scopeLabel = isGlobal ? "Für alle Kurse dieser Schule" : "Nur für den aktuellen Kurs";
     card.innerHTML = `
       <header class="section-card-head">
         <span class="section-title-text"></span>
-        <button type="button" class="section-rename" aria-label="Umbenennen">
-          <i data-lucide="pencil"></i>
-        </button>
+        <span class="section-scope-icon" aria-label="${scopeLabel}" title="${scopeLabel}">
+          <i data-lucide="${scopeIcon}" aria-hidden="true"></i>
+        </span>
       </header>
       <div class="section-content rich-content" role="button" tabindex="0"
            aria-label="Bearbeiten"></div>
@@ -1277,25 +1290,30 @@ function renderDashboard() {
       const cb = e.target.closest(".checkbox");
       if (cb) {
         e.stopPropagation();
-        toggleCheckboxAndSave(cb, s.slot, content);
+        toggleCheckboxAndSave(cb, s.id, content);
         return;
       }
-      openEditor(s.slot);
+      openEditor(s.id);
     });
     content.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        openEditor(s.slot);
+        openEditor(s.id);
       }
     });
 
-    card.querySelector(".section-rename").addEventListener("click", (e) => {
-      e.stopPropagation();
-      startRename(card, s);
-    });
+    attachSectionLongPress(card, s);
 
     dashEl.cards.appendChild(card);
   }
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "section-add-inline";
+  addBtn.textContent = "+ Neuer Block";
+  addBtn.addEventListener("click", openSectionModal);
+  dashEl.cards.appendChild(addBtn);
+
   refreshIcons();
 }
 
@@ -1322,50 +1340,10 @@ function renderRichContentInto(container, html) {
   });
 }
 
-// ─── Dashboard: Titel umbenennen (inline) ──────────────────────────────────
-
-function startRename(card, section) {
-  const head = card.querySelector(".section-card-head");
-  const span = head.querySelector(".section-title-text");
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "section-title-input";
-  input.value = section.title;
-  input.maxLength = 40;
-  span.replaceWith(input);
-  input.focus();
-  input.select();
-
-  let done = false;
-  const finish = async (save) => {
-    if (done) return;
-    done = true;
-    const newTitle = input.value.trim();
-    input.replaceWith(span);
-    if (!save || !newTitle || newTitle === section.title) return;
-    const { error } = await supa.from("sections")
-      .update({ title: newTitle })
-      .eq("school_id", currentSchool.id)
-      .eq("slot", section.slot);
-    if (error) {
-      showToast(`Umbenennen fehlgeschlagen: ${error.message}`, 3500);
-      return;
-    }
-    section.title = newTitle;
-    span.textContent = newTitle;
-  };
-
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter")  { e.preventDefault(); finish(true);  }
-    if (e.key === "Escape") { e.preventDefault(); finish(false); }
-  });
-  input.addEventListener("blur", () => finish(true));
-}
-
 // ─── Dashboard: Editor öffnen / schließen / speichern ─────────────────────
 
-function openEditor(slot) {
-  const s = sections.find((x) => x.slot === slot);
+function openEditor(id) {
+  const s = sections.find((x) => x.id === id);
   if (!s) return;
   dashEl.editorTitle.textContent = s.title;
   renderRichContentInto(dashEl.editor, s.content);
@@ -1374,7 +1352,7 @@ function openEditor(slot) {
   dashEl.editor.querySelectorAll(".checkbox").forEach((cb) => {
     cb.setAttribute("contenteditable", "false");
   });
-  editorContext = { slot, originalBlocks: extractBlocks(s.content) };
+  editorContext = { id, originalBlocks: extractBlocks(s.content) };
   dashEl.editorModal.hidden = false;
   refreshIcons();
   setTimeout(() => dashEl.editor.focus(), 50);
@@ -1455,11 +1433,11 @@ dashEl.editor.addEventListener("paste", (e) => {
 
 dashEl.editorSave.addEventListener("click", async () => {
   if (!editorContext) return;
-  const { slot, originalBlocks } = editorContext;
+  const { id, originalBlocks } = editorContext;
   dashEl.editorSave.disabled = true;
   const mySlug = currentUser ? currentUser.slug : "";
   const attributed = attributeBlocks(dashEl.editor.innerHTML, originalBlocks, mySlug);
-  const err = await persistSection(slot, attributed);
+  const err = await persistSection(id, attributed);
   dashEl.editorSave.disabled = false;
   if (err) return;
   closeEditor();
@@ -1468,14 +1446,14 @@ dashEl.editorSave.addEventListener("click", async () => {
 // Checkbox-Toggle in der Read-Ansicht: Zustand flippen und direkt speichern,
 // ohne die Blöcke neu zu attributieren (der Autor eines Punkts soll durch
 // bloßes Abhaken nicht wechseln).
-async function toggleCheckboxAndSave(checkbox, slot, container) {
+async function toggleCheckboxAndSave(checkbox, id, container) {
   const li = checkbox.closest("li[data-check]");
   if (!li) return;
   li.setAttribute("data-check", li.getAttribute("data-check") === "true" ? "false" : "true");
-  await persistSection(slot, container.innerHTML);
+  await persistSection(id, container.innerHTML);
 }
 
-async function persistSection(slot, html) {
+async function persistSection(id, html) {
   const clean = sanitizeHtml(html);
   const { error } = await supa.from("sections")
     .update({
@@ -1483,15 +1461,14 @@ async function persistSection(slot, html) {
       updated_by: currentUser ? currentUser.id : null,
       updated_at: new Date().toISOString(),
     })
-    .eq("school_id", currentSchool.id)
-    .eq("slot", slot);
+    .eq("id", id);
   if (error) {
     showToast(`Speichern fehlgeschlagen: ${error.message}`, 3500);
     return error;
   }
-  const s = sections.find((x) => x.slot === slot);
+  const s = sections.find((x) => x.id === id);
   if (s) s.content = clean;
-  const card = dashEl.cards.querySelector(`.section-card[data-slot="${slot}"]`);
+  const card = dashEl.cards.querySelector(`.section-card[data-id="${id}"]`);
   if (card) {
     renderRichContentInto(card.querySelector(".section-content"), clean);
     refreshIcons();
@@ -2028,6 +2005,211 @@ async function deleteCourse(course) {
   }
   showToast(`Kurs „${course.name}" gelöscht.`);
 }
+
+// ─── Dashboard: Notizblock löschen (Long-Press → Drag → Delete-Zone) ──────
+
+function attachSectionLongPress(card, section) {
+  let timer = null;
+  let startX = 0, startY = 0;
+  let activePointerId = null;
+  let didDrag = false;
+
+  const clearPre = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    activePointerId = null;
+  };
+
+  card.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (activePointerId !== null) return;
+    // Nur der Header darf die Geste starten — auf dem contenteditable-ähnlichen
+    // Content-Bereich würde ein Long-Press die Text-Selektion blockieren.
+    if (!e.target.closest(".section-card-head")) return;
+    activePointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    didDrag = false;
+    timer = setTimeout(() => {
+      timer = null;
+      didDrag = true;
+      const pid = activePointerId;
+      activePointerId = null;
+      startSectionDrag(card, section, pid, startX, startY);
+    }, LONG_PRESS_MS);
+  });
+
+  card.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId || !timer) return;
+    if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_THRESHOLD) clearPre();
+  });
+  card.addEventListener("pointerup", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
+  });
+  card.addEventListener("pointercancel", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
+  });
+  card.addEventListener("click", (e) => {
+    if (didDrag) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      didDrag = false;
+    }
+  }, true);
+}
+
+function startSectionDrag(card, section, pointerId, initialX, initialY) {
+  const isGlobal = section.course_id === null || section.course_id === undefined;
+  const scopeIcon = isGlobal ? "globe" : "graduation-cap";
+
+  const ghost = document.createElement("div");
+  ghost.className = "section-ghost " + (isGlobal ? "section-ghost--global" : "section-ghost--course");
+  ghost.innerHTML = `
+    <span class="section-ghost-title"></span>
+    <span class="section-ghost-icon"><i data-lucide="${scopeIcon}"></i></span>
+  `;
+  ghost.querySelector(".section-ghost-title").textContent = section.title;
+  document.body.appendChild(ghost);
+
+  document.body.classList.add("is-dragging");
+  el.deleteZone.hidden = false;
+  el.deleteZone.classList.remove("is-hover");
+  refreshIcons();
+
+  const offsetX = 40, offsetY = 20;
+  const place = (x, y) => {
+    ghost.style.left = (x - offsetX) + "px";
+    ghost.style.top  = (y - offsetY) + "px";
+    el.deleteZone.classList.toggle("is-hover", isOverDeleteZone(x, y));
+  };
+  place(initialX, initialY);
+
+  const onMove = (e) => {
+    if (e.pointerId !== pointerId) return;
+    e.preventDefault();
+    place(e.clientX, e.clientY);
+  };
+  const onUp = async (e) => {
+    if (e.pointerId !== pointerId) return;
+    const drop = isOverDeleteZone(e.clientX, e.clientY);
+    cleanup();
+    if (drop) await deleteSection(section);
+  };
+  const onCancel = (e) => { if (e.pointerId === pointerId) cleanup(); };
+  const onTouchMove = (e) => e.preventDefault();
+
+  function cleanup() {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onCancel);
+    document.removeEventListener("touchmove", onTouchMove);
+    ghost.remove();
+    document.body.classList.remove("is-dragging");
+    el.deleteZone.hidden = true;
+    el.deleteZone.classList.remove("is-hover");
+  }
+
+  document.addEventListener("pointermove", onMove, { passive: false });
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onCancel);
+  document.addEventListener("touchmove", onTouchMove, { passive: false });
+
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+async function deleteSection(section) {
+  const isGlobal = section.course_id === null || section.course_id === undefined;
+  const scopeHint = isGlobal ? "(global)" : "(dieser Kurs)";
+  const hasContent = section.content && section.content.replace(/<[^>]*>/g, "").trim().length > 0;
+  const body = hasContent
+    ? `${scopeHint} wird mit allen Notizen unwiderruflich gelöscht.`
+    : `${scopeHint} wird gelöscht.`;
+
+  const ok = await showConfirm({
+    title:        "Notizblock löschen?",
+    subject:      `„${section.title}"`,
+    body,
+    confirmLabel: "Löschen",
+  });
+  if (!ok) return;
+
+  const { error } = await supa.from("sections").delete().eq("id", section.id);
+  if (error) {
+    showToast(`Konnte „${section.title}" nicht löschen: ${error.message}`, 3500);
+    return;
+  }
+  showToast(`Notizblock „${section.title}" gelöscht.`);
+  await refresh();
+}
+
+// ─── Dashboard: neuen Notizblock anlegen ──────────────────────────────────
+
+let sectionModalScope = "course";
+
+function updateSectionScopeUI() {
+  if (!el.sectionScopePicks) return;
+  el.sectionScopePicks.querySelectorAll(".section-scope-pick").forEach((btn) => {
+    const active = btn.dataset.scope === sectionModalScope;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", active ? "true" : "false");
+  });
+}
+
+function openSectionModal() {
+  sectionModalScope = "course";
+  el.sectionNameInput.value = "";
+  clearError(el.sectionError);
+  updateSectionScopeUI();
+  el.sectionModal.hidden = false;
+  refreshIcons();
+  setTimeout(() => el.sectionNameInput.focus(), 30);
+}
+
+function closeSectionModal() {
+  el.sectionModal.hidden = true;
+}
+
+el.sectionModal.querySelectorAll("[data-section-close]").forEach((n) =>
+  n.addEventListener("click", closeSectionModal)
+);
+el.sectionScopePicks.addEventListener("click", (e) => {
+  const btn = e.target.closest(".section-scope-pick");
+  if (!btn) return;
+  sectionModalScope = btn.dataset.scope === "global" ? "global" : "course";
+  updateSectionScopeUI();
+});
+el.sectionNameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); el.sectionSave.click(); }
+});
+
+el.sectionSave.addEventListener("click", async () => {
+  const name = el.sectionNameInput.value.trim();
+  if (!name) {
+    showError(el.sectionError, "Bitte einen Namen eingeben.");
+    return;
+  }
+  clearError(el.sectionError);
+  el.sectionSave.disabled = true;
+
+  const payload = {
+    title: name,
+    content: "",
+    updated_by: currentUser ? currentUser.id : null,
+  };
+  if (sectionModalScope === "global") {
+    payload.school_id = currentSchool.id;
+  } else {
+    payload.course_id = currentCourse.id;
+  }
+
+  const { error } = await supa.from("sections").insert(payload);
+  el.sectionSave.disabled = false;
+  if (error) {
+    showError(el.sectionError, `Konnte Notizblock nicht anlegen: ${error.message}`);
+    return;
+  }
+  closeSectionModal();
+  await refresh();
+});
 
 // ─── Start ─────────────────────────────────────────────────────────────────
 

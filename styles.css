@@ -1248,6 +1248,17 @@ body.is-dragging * { -webkit-user-select: none; user-select: none; }
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
+/* Globale Blöcke bekommen einen subtilen Gold-Tinge — visuelles Signal, dass
+   sie schulweit gelten und nicht kurs-spezifisch sind. Kurs-Blöcke bleiben
+   neutral (harmonieren mit dem farbig gestalteten Header des aktiven Kurses). */
+.section-card--global {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+.section-card--global .section-card-head {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
 .section-card-head {
   display: flex;
   align-items: center;
@@ -1256,6 +1267,7 @@ body.is-dragging * { -webkit-user-select: none; user-select: none; }
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   min-height: 44px;
+  touch-action: none;  /* damit der Long-Press auf dem Header nicht als Scroll interpretiert wird */
 }
 .section-title-text {
   flex: 1;
@@ -1270,41 +1282,16 @@ body.is-dragging * { -webkit-user-select: none; user-select: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.section-title-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font: inherit;
-  font-family: var(--font-body);
-  font-size: 0.75rem;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: var(--primary);
-  background: var(--bg);
-}
-.section-title-input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-  border-color: transparent;
-}
 
-.section-rename {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.section-scope-icon {
   color: var(--muted);
-  display: grid;
+  display: inline-grid;
   place-items: center;
-  border-radius: 3px;
+  padding: 6px;
   flex-shrink: 0;
 }
-.section-rename:hover { background: color-mix(in srgb, var(--primary) 8%, transparent); color: var(--primary); }
-.section-rename svg { width: 14px; height: 14px; }
+.section-scope-icon svg { width: 16px; height: 16px; }
+.section-card--global .section-scope-icon { color: var(--accent); }
 
 .section-content {
   padding: 12px 14px;
@@ -1322,6 +1309,94 @@ body.is-dragging * { -webkit-user-select: none; user-select: none; }
   font-style: italic;
   font-size: 0.85rem;
 }
+
+/* Inline-„+"-Button am Ende der Notizblock-Liste */
+.section-add-inline {
+  width: 100%;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.section-add-inline:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+}
+
+/* Scope-Auswahl im Neu-anlegen-Modal */
+.section-scope-picks {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+.section-scope-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.92rem;
+  color: var(--fg);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.section-scope-pick svg { width: 18px; height: 18px; color: var(--muted); flex-shrink: 0; }
+.section-scope-pick:hover { border-color: var(--primary); }
+.section-scope-pick.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+.section-scope-pick.is-active svg { color: var(--accent); }
+
+/* Drag-Preview beim Löschen eines Notizblocks */
+.section-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 199;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  box-shadow: 0 12px 28px rgba(26, 39, 68, 0.25);
+  opacity: 0.95;
+  transform: rotate(-2deg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+}
+.section-ghost--global {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.section-ghost-title {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--primary);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.section-ghost-icon { color: var(--muted); display: inline-grid; place-items: center; }
+.section-ghost-icon svg { width: 16px; height: 16px; }
+.section-ghost--global .section-ghost-icon { color: var(--accent); }
 
 /* Reichhaltiger Inhalt (geteilt zwischen Read-Ansicht und Editor) */
 .rich-content {

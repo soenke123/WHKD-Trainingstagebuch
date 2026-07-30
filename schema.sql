@@ -106,16 +106,18 @@ create table entry_focus_areas (
   primary key (entry_id, focus_area_id)
 );
 
--- Genau drei Dashboard-Slots pro Schule (Notizen, Events, Prüflinge).
--- Dashboard bleibt schul-weit geteilt — kein course_id.
+-- Dashboard-Notizblöcke. Jeder Block ist entweder global (course_id NULL,
+-- schulweit sichtbar) oder an einen einzelnen Kurs gebunden. Beliebig viele
+-- Blöcke pro Schule/Kurs. Name und Scope sind nach Anlage unveränderbar.
 create table sections (
+  id bigserial primary key,
   school_id bigint not null references schools(id) on delete cascade,
-  slot int not null check (slot in (1, 2, 3)),
+  course_id bigint references courses(id) on delete cascade,
   title text not null,
   content text not null default '',
   updated_by uuid references auth.users(id),
   updated_at timestamptz default now(),
-  primary key (school_id, slot)
+  created_at timestamptz default now()
 );
 
 -- ─── Trigger: school_id automatisch aus course_id ableiten ────────────────
@@ -135,6 +137,8 @@ create trigger set_school_id_from_course before insert on techniques
 create trigger set_school_id_from_course before insert on focus_areas
   for each row execute function set_school_id_from_course();
 create trigger set_school_id_from_course before insert on entries
+  for each row execute function set_school_id_from_course();
+create trigger set_school_id_from_course before insert on sections
   for each row execute function set_school_id_from_course();
 
 -- ─── Views für Häufigkeitszahlen ────────────────────────────────────────────
@@ -197,6 +201,10 @@ begin
       'Pratze/Airbag', 'Multiman', 'Todmachertraining'
     ]) as n;
 
+  insert into sections (school_id, course_id, title, content) values
+    (p_school_id, new_id, 'Notizen',   ''),
+    (p_school_id, new_id, 'Prüflinge', '');
+
   return new_id;
 end $$;
 
@@ -229,10 +237,10 @@ begin
       'Pratze/Airbag', 'Multiman', 'Todmachertraining'
     ]) as n;
 
-  insert into sections (school_id, slot, title, content) values
-    (new_id, 1, 'Notizen',   ''),
-    (new_id, 2, 'Events',    ''),
-    (new_id, 3, 'Prüflinge', '');
+  insert into sections (school_id, course_id, title, content) values
+    (new_id, new_course_id, 'Notizen',   ''),
+    (new_id, null,          'Events',    ''),
+    (new_id, new_course_id, 'Prüflinge', '');
 
   return new_id;
 end $$;
@@ -315,10 +323,17 @@ create policy school_insert on entry_focus_areas
     exists (select 1 from entries e where e.id = entry_id and e.school_id = my_school_id())
   );
 
--- sections: eigene Schule lesen; nur der letzte Editor darf updaten
+-- sections: eigene Schule lesen; nur der letzte Editor darf updaten;
+-- jeder Trainer der Schule darf neue Blöcke anlegen und beliebige löschen.
 create policy school_read on sections
   for select to authenticated using (school_id = my_school_id());
+create policy school_insert on sections
+  for insert to authenticated
+  with check (school_id = my_school_id() and updated_by = auth.uid());
 create policy school_update on sections
   for update to authenticated
   using (school_id = my_school_id())
   with check (school_id = my_school_id() and updated_by = auth.uid());
+create policy school_delete on sections
+  for delete to authenticated
+  using (school_id = my_school_id());

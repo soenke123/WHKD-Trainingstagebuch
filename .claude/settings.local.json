@@ -7,7 +7,9 @@
       "Bash(node --check \"C:/Users/snke/OneDrive/ClaudeProjekte/whkd trainingstagebuch/app.js\")",
       "Bash(curl *)",
       "Bash(npx --yes serve -l 8000 .)",
-      "Bash(node --check -)"
+      "Bash(node --check -)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "Bash(npx *)"
     ]
   }
 }
