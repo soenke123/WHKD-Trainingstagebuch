@@ -76,6 +76,20 @@ const EMOJI_SUGGESTIONS = [
   "⚔️", "🗡️", "🛡️", "🏹", "🎯", "🏋️", "🧘", "🌀",
 ];
 
+// Palette für den Kurs-Header: dunkle Farben, die alle guten Kontrast zum
+// weißen Header-Text bieten. Reihenfolge = Anzeigereihenfolge im Modal.
+const COURSE_COLORS = [
+  "#1a2744",  // Navy (Default)
+  "#0f7c8a",  // Teal
+  "#4a7c59",  // Forest
+  "#6b4c93",  // Purple
+  "#b23a48",  // Crimson
+  "#c96b1f",  // Rust
+  "#2a5674",  // Steel
+  "#4d5b3a",  // Olive
+];
+const COURSE_DEFAULT_COLOR = COURSE_COLORS[0];
+
 // ─── DOM-Handles ───────────────────────────────────────────────────────────
 
 const $ = (id) => document.getElementById(id);
@@ -142,7 +156,25 @@ const el = {
   confirmTitle:  $("confirm-title"),
   confirmMsg:    $("confirm-message"),
   confirmOk:     $("confirm-ok"),
+
+  topbar:          document.querySelector(".topbar"),
+  themeColor:      document.querySelector('meta[name="theme-color"]'),
+  courseSwitcher:  $("course-switcher"),
+  courseSwitchDot: null,   // wird nach Init gesetzt
+  courseSwitchTxt: null,
+  courseMenu:      $("course-menu"),
+  courseList:      $("course-list"),
+  courseAddBtn:    $("course-add-btn"),
+
+  courseModal:      $("course-modal"),
+  courseNameInput:  $("course-name-input"),
+  courseColorPicks: $("course-color-picks"),
+  courseError:      $("course-error"),
+  courseSave:       $("course-save"),
 };
+
+el.courseSwitchDot = el.courseSwitcher.querySelector(".course-dot");
+el.courseSwitchTxt = el.courseSwitcher.querySelector(".course-name");
 
 // ─── State ─────────────────────────────────────────────────────────────────
 
@@ -152,7 +184,9 @@ let selectedTech  = new Set();
 let selectedFocus = new Set();
 
 let currentUser    = null;       // { id, email, name, slug }
-let currentSchool  = null;       // { id, slug, name }
+let currentSchool  = null;       // { id, slug, name, active_course_id }
+let currentCourse  = null;       // { id, slug, name, color } — aktiver Kurs
+let courses        = [];         // [{ id, slug, name, color }] — alle Kurse der eigenen Schule
 let trainers       = [];         // [{ user_id, slug, display_name, color }] — Kollegen der eigenen Schule
 let historyEntries = [];         // letzte bis zu 16 Trainings, entries[0] = neuestes
 let historyIndex   = 0;          // 0 = neuestes, größer = älter
@@ -305,8 +339,12 @@ el.logout.addEventListener("click", async () => {
   await supa.auth.signOut();
   currentUser = null;
   currentSchool = null;
+  currentCourse = null;
+  courses = [];
   trainers = [];
   updateBrandSchool();
+  applyCourseTheme(null);
+  el.courseSwitcher.hidden = true;
   el.app.hidden = true;
   el.login.hidden = false;
 });
@@ -320,11 +358,12 @@ async function enterApp() {
   const { data } = await supa.auth.getUser();
   if (!data.user) return;
 
-  // Trainer-Row + verlinkte Schule holen. Ohne diese Zuordnung darf niemand
-  // in die App — RLS würde ohnehin überall leere Ergebnisse liefern.
+  // Trainer-Row + verlinkte Schule (inkl. aktivem Kurs) holen. Ohne diese
+  // Zuordnung darf niemand in die App — RLS liefert ohnehin überall leere
+  // Ergebnisse.
   const { data: me, error } = await supa
     .from("trainers")
-    .select("user_id, slug, display_name, color, school:schools(id, slug, name)")
+    .select("user_id, slug, display_name, color, school:schools(id, slug, name, active_course_id)")
     .eq("user_id", data.user.id)
     .single();
 
@@ -346,7 +385,44 @@ async function enterApp() {
     name: me.display_name,
   };
   updateBrandSchool();
+
+  // Kurse laden bevor der erste refresh() läuft — refresh() filtert alle
+  // Fakt-Queries über currentCourse.id, das muss vorher stehen.
+  const coursesRes = await supa.from("courses")
+    .select("id, slug, name, color")
+    .order("created_at");
+  if (coursesRes.error) {
+    console.error("Kurse nicht ladbar", coursesRes.error);
+    showError(el.loginError,
+      `Kurse konnten nicht geladen werden: ${coursesRes.error.message}`);
+    await supa.auth.signOut();
+    el.app.hidden = true;
+    el.login.hidden = false;
+    return;
+  }
+  courses = coursesRes.data || [];
+  currentCourse = pickInitialCourse(currentSchool.active_course_id);
+  if (!currentCourse) {
+    // Sollte nach Migration nie passieren — aber ein leerer Kurskatalog ist
+    // besser als ein toter Screen ohne Fehlermeldung.
+    showError(el.loginError,
+      "Diese Schule hat keinen Kurs. Bitte im SQL-Editor einen anlegen.");
+    await supa.auth.signOut();
+    el.app.hidden = true;
+    el.login.hidden = false;
+    return;
+  }
+  renderCourseSwitcher();
+  applyCourseTheme(currentCourse.color);
+  syncTopbarHeight();
+
   await refresh();
+}
+
+function pickInitialCourse(preferredId) {
+  if (!courses.length) return null;
+  const preferred = courses.find((c) => c.id === preferredId);
+  return preferred || courses[0];
 }
 
 // ─── Tabs ──────────────────────────────────────────────────────────────────
@@ -367,15 +443,19 @@ el.tabButtons.forEach((btn) => {
 // ─── Daten laden & rendern ─────────────────────────────────────────────────
 
 async function refresh() {
-  const [techRes, focusRes, entryRes, secRes, trainerRes] = await Promise.all([
-    fetchStatsWithIconFallback("technique_stats"),
-    fetchStatsWithIconFallback("focus_area_stats"),
+  if (!currentCourse) return;
+  const courseId = currentCourse.id;
+  const [techRes, focusRes, entryRes, secRes, trainerRes, courseRes] = await Promise.all([
+    fetchStatsWithIconFallback("technique_stats", courseId),
+    fetchStatsWithIconFallback("focus_area_stats", courseId),
     supa.from("entries")
       .select("id, comment, created_at, user_id, entry_techniques(technique_id), entry_focus_areas(focus_area_id)")
+      .eq("course_id", courseId)
       .order("created_at", { ascending: false })
       .limit(16),
     supa.from("sections").select("slot, title, content, updated_at, updated_by").order("slot"),
     supa.from("trainers").select("user_id, slug, display_name, color"),
+    supa.from("courses").select("id, slug, name, color").order("created_at"),
   ]);
 
   if (techRes.error || focusRes.error || entryRes.error) {
@@ -386,6 +466,7 @@ async function refresh() {
   // das Dashboard nur leer, statt die ganze App zu blockieren.
   if (secRes.error) console.warn("sections nicht geladen:", secRes.error.message);
   if (trainerRes.error) console.warn("trainers nicht geladen:", trainerRes.error.message);
+  if (courseRes.error) console.warn("courses nicht geladen:", courseRes.error.message);
 
   techniques      = sortStats(techRes.data);
   focusAreas      = sortStats(focusRes.data);
@@ -393,6 +474,17 @@ async function refresh() {
   historyIndex    = 0;
   sections        = secRes.data || [];
   trainers        = trainerRes.data || trainers;
+  if (courseRes.data) {
+    courses = courseRes.data;
+    // aktueller Kurs könnte inzwischen (z.B. von einem anderen Trainer)
+    // umbenannt/umgefärbt worden sein — Objekt-Referenz auffrischen.
+    const refreshed = courses.find((c) => c.id === currentCourse.id);
+    if (refreshed) {
+      currentCourse = refreshed;
+      applyCourseTheme(currentCourse.color);
+      renderCourseSwitcher();
+    }
+  }
 
   renderCategoryList(el.techList,  techniques,  selectedTech,  "tech");
   renderCategoryList(el.focusList, focusAreas,  selectedFocus, "focus");
@@ -405,16 +497,19 @@ async function refresh() {
 // Spalte in den Stats-Views nicht — dann würde die ganze Query fehlschlagen
 // und die Tagebuchansicht bliebe leer. Bei jedem Fehler einmal ohne `icon`
 // nachladen; die App bleibt dadurch auch ohne Migration nutzbar.
-async function fetchStatsWithIconFallback(view) {
+async function fetchStatsWithIconFallback(view, courseId) {
   const withIcon = await supa.from(view)
-    .select("id, name, icon, usage_count, last_used_at");
+    .select("id, name, icon, usage_count, last_used_at")
+    .eq("course_id", courseId);
   if (!withIcon.error) return withIcon;
 
   console.warn(
     `View "${view}" nicht mit icon abfragbar (${withIcon.error.message}) — retry ohne icon. `
     + `Führe schema-add-icon-column.sql im Supabase-SQL-Editor aus.`
   );
-  return supa.from(view).select("id, name, usage_count, last_used_at");
+  return supa.from(view)
+    .select("id, name, usage_count, last_used_at")
+    .eq("course_id", courseId);
 }
 
 function sortStats(rows) {
@@ -783,7 +878,8 @@ async function addCategoryInline(table, nameInput, iconInput, selectedSet, chips
 // Insert + lokalen State aktualisieren + Listen neu rendern. Wird sowohl vom
 // Inline-Formular als auch vom Kategorie-Modal (+ am Ende der Liste) genutzt.
 async function insertCategory(table, name, icon, kind) {
-  const payload = { name };
+  if (!currentCourse) return { message: "Kein aktiver Kurs." };
+  const payload = { name, course_id: currentCourse.id };
   if (icon) payload.icon = icon;
 
   const { data, error } = await supa.from(table).insert(payload).select().single();
@@ -894,10 +990,17 @@ el.saveBtn.addEventListener("click", async () => {
     ? new Date(el.modalDate.value).toISOString()
     : new Date().toISOString();
 
+  if (!currentCourse) {
+    showError(el.modalError, "Kein aktiver Kurs. Bitte einen wählen.");
+    el.saveBtn.disabled = false;
+    return;
+  }
+
   const { data: entry, error: entryErr } = await supa
     .from("entries")
     .insert({
       user_id: currentUser.id,
+      course_id: currentCourse.id,
       comment: el.modalComment.value.trim() || null,
       created_at: createdAt,
     })
@@ -1549,6 +1652,381 @@ function cleanContainer(container) {
     }
     cleanContainer(kid);
   }
+}
+
+// ─── Kurs-Switcher: Header + Popover-Menü ─────────────────────────────────
+
+function applyCourseTheme(color) {
+  const effective = color || COURSE_DEFAULT_COLOR;
+  document.body.style.setProperty("--course-color", effective);
+  if (el.themeColor) el.themeColor.setAttribute("content", effective);
+}
+
+// Höhe des Headers als CSS-Variable, damit die sticky-Tabs korrekt darunter
+// liegen. Wird nach dem ersten Rendering + bei Resize aufgerufen.
+function syncTopbarHeight() {
+  if (!el.topbar) return;
+  const h = el.topbar.offsetHeight;
+  if (h > 0) document.body.style.setProperty("--topbar-height", `${h}px`);
+}
+window.addEventListener("resize", syncTopbarHeight);
+
+function renderCourseSwitcher() {
+  if (!currentCourse) {
+    el.courseSwitcher.hidden = true;
+    return;
+  }
+  el.courseSwitcher.hidden = false;
+  el.courseSwitchTxt.textContent = currentCourse.name;
+  el.courseSwitchDot.style.background = currentCourse.color || COURSE_DEFAULT_COLOR;
+}
+
+function renderCourseMenu() {
+  el.courseList.innerHTML = "";
+  for (const c of courses) {
+    const li = document.createElement("li");
+    li.dataset.id = String(c.id);
+    li.setAttribute("role", "menuitem");
+    li.setAttribute("aria-current", c.id === currentCourse.id ? "true" : "false");
+    li.innerHTML = `
+      <span class="course-color-dot" aria-hidden="true"></span>
+      <span class="course-name-text"></span>
+    `;
+    li.querySelector(".course-color-dot").style.background = c.color || COURSE_DEFAULT_COLOR;
+    li.querySelector(".course-name-text").textContent = c.name;
+    li.addEventListener("click", (e) => {
+      // Wenn ein Long-Press die Selection gerade in einen Drag verwandelt hat,
+      // unterdrückt der Long-Press-Helfer den nachfolgenden Klick — hier
+      // nichts extra tun.
+      if (c.id === currentCourse.id) { closeCourseMenu(); return; }
+      switchCourse(c.id);
+    });
+    attachCourseLongPress(li, c);
+    el.courseList.appendChild(li);
+  }
+}
+
+function positionCourseMenu() {
+  const btn = el.courseSwitcher.getBoundingClientRect();
+  el.courseMenu.style.top = `${btn.bottom + 6}px`;
+  el.courseMenu.style.left = `${btn.left}px`;
+  // Rechts nicht überm rechten Body-Rand hinausschieben.
+  requestAnimationFrame(() => {
+    const menuRect = el.courseMenu.getBoundingClientRect();
+    const bodyRight = document.body.getBoundingClientRect().right;
+    if (menuRect.right > bodyRight - 8) {
+      el.courseMenu.style.left = `${Math.max(8, bodyRight - menuRect.width - 8)}px`;
+    }
+  });
+}
+
+function openCourseMenu() {
+  renderCourseMenu();
+  el.courseMenu.hidden = false;
+  positionCourseMenu();
+  el.courseSwitcher.setAttribute("aria-expanded", "true");
+  refreshIcons();
+  // Klick außerhalb schließt das Menü. Setup nach einem Tick, damit der
+  // öffnende Klick selbst nicht sofort wieder zumacht.
+  setTimeout(() => document.addEventListener("click", onDocClickForMenu, true), 0);
+}
+
+function closeCourseMenu() {
+  el.courseMenu.hidden = true;
+  el.courseSwitcher.setAttribute("aria-expanded", "false");
+  document.removeEventListener("click", onDocClickForMenu, true);
+}
+
+function onDocClickForMenu(e) {
+  if (el.courseMenu.contains(e.target)) return;
+  if (el.courseSwitcher.contains(e.target)) return;
+  closeCourseMenu();
+}
+
+el.courseSwitcher.addEventListener("click", () => {
+  if (el.courseMenu.hidden) openCourseMenu();
+  else closeCourseMenu();
+});
+
+async function switchCourse(id) {
+  const next = courses.find((c) => c.id === id);
+  if (!next) return;
+  currentCourse = next;
+  closeCourseMenu();
+  renderCourseSwitcher();
+  applyCourseTheme(currentCourse.color);
+  syncTopbarHeight();
+
+  // Auf allen offenen Screens die Selection zurücksetzen — Kategorien
+  // aus anderen Kursen sind hier bedeutungslos.
+  selectedTech.clear();
+  selectedFocus.clear();
+
+  // Aktiven Kurs in der DB festhalten (geteilt für alle Trainer der Schule).
+  const { error } = await supa.from("schools")
+    .update({ active_course_id: id })
+    .eq("id", currentSchool.id);
+  if (error) {
+    console.warn("active_course_id konnte nicht gespeichert werden:", error.message);
+  } else {
+    currentSchool.active_course_id = id;
+  }
+
+  await refresh();
+}
+
+// ─── Kurs anlegen ─────────────────────────────────────────────────────────
+
+let courseModalColor = COURSE_DEFAULT_COLOR;
+
+function renderCoursePalette() {
+  el.courseColorPicks.innerHTML = "";
+  for (const c of COURSE_COLORS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "course-color-pick";
+    btn.style.setProperty("--swatch", c);
+    btn.setAttribute("aria-label", `Farbe ${c}`);
+    btn.setAttribute("aria-pressed", c === courseModalColor ? "true" : "false");
+    btn.addEventListener("click", () => {
+      courseModalColor = c;
+      el.courseColorPicks.querySelectorAll(".course-color-pick").forEach((b) => {
+        b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+      });
+    });
+    el.courseColorPicks.appendChild(btn);
+  }
+}
+
+function openCourseModal() {
+  closeCourseMenu();
+  courseModalColor = COURSE_DEFAULT_COLOR;
+  el.courseNameInput.value = "";
+  clearError(el.courseError);
+  renderCoursePalette();
+  el.courseModal.hidden = false;
+  refreshIcons();
+  setTimeout(() => el.courseNameInput.focus(), 30);
+}
+
+function closeCourseModal() {
+  el.courseModal.hidden = true;
+}
+
+el.courseAddBtn.addEventListener("click", openCourseModal);
+el.courseModal.querySelectorAll("[data-course-close]").forEach((n) =>
+  n.addEventListener("click", closeCourseModal)
+);
+el.courseNameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); el.courseSave.click(); }
+});
+
+// Slug aus Anzeigename: kleinbuchstabig, Umlaute normalisieren, alles
+// Nicht-alphanumerische als '-'. Kollisionen bekommen '-2', '-3', … drangehängt.
+function makeCourseSlug(name) {
+  const base = name.trim().toLowerCase()
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!base) return "kurs";
+  const existing = new Set(courses.map((c) => c.slug));
+  if (!existing.has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+el.courseSave.addEventListener("click", async () => {
+  const name = el.courseNameInput.value.trim();
+  if (!name) {
+    showError(el.courseError, "Bitte einen Kursnamen eingeben.");
+    return;
+  }
+  clearError(el.courseError);
+  el.courseSave.disabled = true;
+
+  const slug = makeCourseSlug(name);
+  const { data: newId, error } = await supa.rpc("bootstrap_course", {
+    p_school_id: currentSchool.id,
+    p_slug: slug,
+    p_name: name,
+    p_color: courseModalColor,
+  });
+  el.courseSave.disabled = false;
+  if (error) {
+    showError(el.courseError, `Konnte Kurs nicht anlegen: ${error.message}`);
+    return;
+  }
+
+  // Neuer Kurs sofort in State + Switcher übernehmen, dann direkt umschalten.
+  const created = {
+    id: newId,
+    slug,
+    name,
+    color: courseModalColor,
+  };
+  courses = [...courses, created];
+  closeCourseModal();
+  await switchCourse(created.id);
+});
+
+// ─── Kurs löschen (Drag-to-Delete aus dem Popover) ────────────────────────
+
+function attachCourseLongPress(li, course) {
+  let timer = null;
+  let startX = 0, startY = 0;
+  let activePointerId = null;
+  let didDrag = false;
+
+  const clearPre = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    activePointerId = null;
+  };
+
+  li.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (activePointerId !== null) return;
+    activePointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    didDrag = false;
+    timer = setTimeout(() => {
+      timer = null;
+      didDrag = true;
+      const pid = activePointerId;
+      activePointerId = null;
+      startCourseDrag(li, course, pid, startX, startY);
+    }, LONG_PRESS_MS);
+  });
+
+  li.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId || !timer) return;
+    if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_THRESHOLD) clearPre();
+  });
+  li.addEventListener("pointerup", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
+  });
+  li.addEventListener("pointercancel", (e) => {
+    if (e.pointerId === activePointerId) clearPre();
+  });
+  // Klick nach Long-Press unterdrücken.
+  li.addEventListener("click", (e) => {
+    if (didDrag) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      didDrag = false;
+    }
+  }, true);
+}
+
+function startCourseDrag(li, course, pointerId, initialX, initialY) {
+  // Menü einklappen: der Nutzer zieht den Ghost jetzt weiter zur Delete-Zone,
+  // das Popover davor wäre nur visuelle Ablenkung.
+  closeCourseMenu();
+
+  const ghost = document.createElement("div");
+  ghost.className = "course-ghost";
+  ghost.innerHTML = `<span class="course-color-dot"></span><span class="course-ghost-name"></span>`;
+  ghost.querySelector(".course-color-dot").style.background = course.color || COURSE_DEFAULT_COLOR;
+  ghost.querySelector(".course-ghost-name").textContent = course.name;
+  document.body.appendChild(ghost);
+
+  document.body.classList.add("is-dragging");
+  el.deleteZone.hidden = false;
+  el.deleteZone.classList.remove("is-hover");
+  refreshIcons();
+
+  const offsetX = 40, offsetY = 20;
+  const place = (x, y) => {
+    ghost.style.left = (x - offsetX) + "px";
+    ghost.style.top  = (y - offsetY) + "px";
+    el.deleteZone.classList.toggle("is-hover", isOverDeleteZone(x, y));
+  };
+  place(initialX, initialY);
+
+  const onMove = (e) => {
+    if (e.pointerId !== pointerId) return;
+    e.preventDefault();
+    place(e.clientX, e.clientY);
+  };
+  const onUp = async (e) => {
+    if (e.pointerId !== pointerId) return;
+    const drop = isOverDeleteZone(e.clientX, e.clientY);
+    cleanup();
+    if (drop) await deleteCourse(course);
+  };
+  const onCancel = (e) => { if (e.pointerId === pointerId) cleanup(); };
+  const onTouchMove = (e) => e.preventDefault();
+
+  function cleanup() {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onCancel);
+    document.removeEventListener("touchmove", onTouchMove);
+    ghost.remove();
+    document.body.classList.remove("is-dragging");
+    el.deleteZone.hidden = true;
+    el.deleteZone.classList.remove("is-hover");
+  }
+
+  document.addEventListener("pointermove", onMove, { passive: false });
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onCancel);
+  document.addEventListener("touchmove", onTouchMove, { passive: false });
+
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+async function deleteCourse(course) {
+  if (courses.length <= 1) {
+    showToast("Letzter Kurs kann nicht gelöscht werden.", 3200);
+    return;
+  }
+
+  // Vor dem Confirm-Dialog Trainings/Kategorien zählen, damit die
+  // Bestätigung ehrlich zeigt, was verloren geht.
+  const [entriesCnt, techCnt, focusCnt] = await Promise.all([
+    supa.from("entries")    .select("id", { count: "exact", head: true }).eq("course_id", course.id),
+    supa.from("techniques") .select("id", { count: "exact", head: true }).eq("course_id", course.id),
+    supa.from("focus_areas").select("id", { count: "exact", head: true }).eq("course_id", course.id),
+  ]);
+
+  const parts = [];
+  if (entriesCnt.count) parts.push(`${entriesCnt.count} Trainings`);
+  if (techCnt.count)    parts.push(`${techCnt.count} Techniken`);
+  if (focusCnt.count)   parts.push(`${focusCnt.count} Schwerpunkte`);
+  const body = parts.length
+    ? `wird gelöscht — ${parts.join(", ")} werden mit entfernt.`
+    : `wird gelöscht.`;
+
+  const ok = await showConfirm({
+    title:        "Kurs löschen?",
+    subject:      `„${course.name}"`,
+    body,
+    confirmLabel: "Löschen",
+  });
+  if (!ok) return;
+
+  const { error } = await supa.from("courses").delete().eq("id", course.id);
+  if (error) {
+    showToast(`Konnte „${course.name}" nicht löschen: ${error.message}`, 3500);
+    return;
+  }
+
+  courses = courses.filter((c) => c.id !== course.id);
+
+  // War der gelöschte Kurs der aktive? Dann auf den ersten verbliebenen
+  // umschalten (setzt auch active_course_id in der DB via switchCourse).
+  if (currentCourse && currentCourse.id === course.id) {
+    await switchCourse(courses[0].id);
+  } else {
+    // Aktueller Kurs bleibt — nur Menü + eventuelles Refresh.
+    await refresh();
+  }
+  showToast(`Kurs „${course.name}" gelöscht.`);
 }
 
 // ─── Start ─────────────────────────────────────────────────────────────────

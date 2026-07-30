@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**WHKD Trainingstagebuch** — kleine mobile-first Webapp für Kung-Fu-Trainer, um sich innerhalb einer Schule gegenseitig anzuzeigen, welche Techniken/Schwerpunkte zuletzt trainiert wurden. Multi-Tenant: mehrere Schulen (Ortsverbände, z.B. „Kiel", „Hamburg") sind komplett isoliert — jede hat eigene Techniken, Schwerpunkte, Einträge und Dashboard-Sections. Kein Public-Facing.
+**WHKD Trainingstagebuch** — kleine mobile-first Webapp für Kung-Fu-Trainer, um sich innerhalb einer Schule gegenseitig anzuzeigen, welche Techniken/Schwerpunkte zuletzt trainiert wurden. Multi-Tenant: mehrere Schulen (Ortsverbände, z.B. „Kiel", „Hamburg") sind komplett isoliert. Innerhalb einer Schule gibt es beliebig viele **Kurse** (z.B. „Basis", „Kickboxen", „Kinder"); jeder Kurs hat einen eigenen Katalog aus Techniken/Schwerpunkten und eigene Trainings-Einträge. Dashboard-Sections dagegen sind schul-weit geteilt. Kein Public-Facing.
 
 ## Stack & Hosting
 
 - **Frontend:** reines HTML / CSS / Vanilla JS. Kein Bundler, kein Framework, kein npm. Supabase-SDK per CDN in `index.html`.
 - **Hosting:** Vercel als statische Seite (kein Build-Command, kein Output-Dir).
-- **Backend:** Supabase (Auth, Postgres, RLS). Multi-Tenant-Schema in `schema.sql`; für bestehende Single-Tenant-DBs gibt es `schema-multitenant-migration.sql`.
+- **Backend:** Supabase (Auth, Postgres, RLS). Multi-Tenant + Kurs-Schema in `schema.sql`. Migrationen: `schema-multitenant-migration.sql` (Single → Multi-Tenant), `schema-add-icon-column.sql` (Emoji-Icons), `schema-courses-migration.sql` (Kurs-Ebene).
 
 Konsequenz: keine Import-Statements, kein `type="module"`, kein `package.json` erwünscht. Wenn eine Änderung ein Build-System nötig machen würde, vorher fragen.
 
@@ -26,10 +26,11 @@ Eine HTML-Seite, zwei Screens (`#login`, `#app`), umgeschaltet per `hidden`-Attr
 
 Datenfluss:
 1. `checkSession()` → wenn Session da, `enterApp()`.
-2. `enterApp()` lädt einmal die eigene Trainer-Row mit verknüpfter Schule (`currentSchool`, `currentUser`), setzt den Schulnamen im Header (`.brand-school`) und ruft `refresh()`.
-3. `refresh()` lädt parallel `technique_stats`, `focus_area_stats`, die letzten 16 `entries` inkl. m:n-Joins, die drei Dashboard-`sections` und alle `trainers` der eigenen Schule. RLS scopet jede Query automatisch über `my_school_id()`.
-4. Renderer schreiben in State (`techniques`, `focusAreas`, `trainers`, `historyEntries`, `sections`, Sets `selectedTech`/`selectedFocus`).
-5. FAB öffnet Modal, das Chips aus dem gleichen State rendert. Save → `insert into entries` (+ Bulk-Inserts in `entry_techniques`/`entry_focus_areas`) → `refresh()`. `school_id` setzt ein Before-Insert-Trigger automatisch; der Client muss das nicht mitschicken.
+2. `enterApp()` lädt Trainer + Schule (inkl. `active_course_id`), dann alle Kurse der Schule, wählt den aktiven Kurs (Fallback: erster Kurs), färbt den Header (`applyCourseTheme`) und ruft `refresh()`.
+3. `refresh()` lädt parallel `technique_stats`, `focus_area_stats`, die letzten 16 `entries` — alle drei über `.eq('course_id', currentCourse.id)` — plus die drei Dashboard-`sections`, alle `trainers` und die aktuelle Kurs-Liste. RLS scopet zusätzlich alles über `my_school_id()`.
+4. Renderer schreiben in State (`techniques`, `focusAreas`, `courses`, `trainers`, `historyEntries`, `sections`, Sets `selectedTech`/`selectedFocus`).
+5. FAB öffnet Modal, das Chips aus dem gleichen State rendert. Save → `insert into entries` (mit `course_id`, `user_id`) + Bulk-Inserts in `entry_techniques`/`entry_focus_areas` → `refresh()`. `school_id` setzt der `set_school_id_from_course`-Trigger automatisch aus dem `course_id`.
+6. Kurs-Switcher im Header öffnet ein Popover-Menü mit allen Kursen + „+ Kurs". Auswahl ruft `switchCourse(id)` → aktualisiert `schools.active_course_id`, lädt Kategorien/Trainings neu, färbt den Header. „+ Kurs" öffnet Kurs-Modal (Name + Farbe aus `COURSE_COLORS`), das per `supa.rpc('bootstrap_course', ...)` den neuen Kurs samt Standard-Katalog anlegt. Kurs löschen läuft über dieselbe Drag-in-Delete-Zone wie Kategorien; letzter Kurs kann nicht gelöscht werden.
 
 Häufigkeit kommt aus SQL-Views (`technique_stats`, `focus_area_stats`) — nicht als eigenes Feld gespeichert. Wenn ein Feature das braucht (z.B. „gemeinsam vs. persönlich zählen"), Views anpassen statt Client-Logik zu duplizieren.
 
@@ -37,11 +38,11 @@ Häufigkeit kommt aus SQL-Views (`technique_stats`, `focus_area_stats`) — nich
 
 ## Kategorien
 
-Standard-Katalog (16 Techniken, 8 Schwerpunkte) wird von der SQL-Funktion `bootstrap_school(slug, name)` beim Anlegen einer neuen Schule kopiert. Neue Kategorien können Trainer inline im Add-Modal anlegen (`addCategory()`); RLS erlaubt `insert` nur für die eigene Schule.
+Standard-Katalog (16 Techniken, 8 Schwerpunkte) wird von `bootstrap_course(school_id, slug, name, color)` in jeden neuen Kurs kopiert. `bootstrap_school(slug, name)` ruft implizit einen Basis-Kurs mit demselben Katalog auf. Neue Kategorien können Trainer inline im Add-Modal anlegen (`insertCategory`); sie bekommen automatisch den aktiven Kurs; RLS erlaubt `insert` nur für die eigene Schule.
 
 ## Neue Schule anlegen
 
-Im Supabase-SQL-Editor: `select bootstrap_school('hamburg', 'Hamburg');` — legt Schule + Standard-Katalog + drei leere Dashboard-Slots an. Trainer danach manuell (Auth-Dashboard + `insert into trainers`). Details in `README.md`.
+Im Supabase-SQL-Editor: `select bootstrap_school('hamburg', 'Hamburg');` — legt Schule + Basis-Kurs + Standard-Katalog + drei leere Dashboard-Slots an, und setzt den Basis-Kurs als aktiven Kurs der Schule. Trainer danach manuell (Auth-Dashboard + `insert into trainers`). Weitere Kurse legen Trainer in der App an. Details in `README.md`.
 
 ## Lokal ausführen
 

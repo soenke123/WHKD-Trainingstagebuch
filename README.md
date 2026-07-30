@@ -2,7 +2,7 @@
 
 Kleine mobile-first Webapp, mit der Kung-Fu-Trainer gegenseitig sichtbar machen, was zuletzt trainiert wurde. Statisches HTML/CSS/JS auf Vercel + Supabase als Backend.
 
-**Multi-Tenant:** jede Schule (Ortsverband) hat isolierte Daten — eigene Techniken, Schwerpunkte, Trainingseinträge und Dashboard-Sections. Im Header steht `WHKD · <Schule> Trainingstagebuch`.
+**Multi-Tenant + Kurse:** jede Schule (Ortsverband) hat isolierte Daten. Innerhalb einer Schule gibt es beliebig viele **Kurse** (z.B. „Basis", „Kickboxen", „Kinder"), die jeweils eigene Techniken, Schwerpunkte und Trainingseinträge haben. Dashboard-Sections bleiben schul-weit geteilt. Im Header steht `WHKD · <Schule>` und darunter der aktive Kurs als Dropdown; dessen Farbe färbt den Header, damit auf einen Blick klar ist, in welchem Kurs man gerade Einträge macht.
 
 ## Setup — Reihenfolge
 
@@ -37,13 +37,15 @@ Dann `http://localhost:8000/` öffnen. `file://` direkt sollte auch klappen, abe
 
 ## Neue Schule anlegen
 
-Ein Aufruf im SQL-Editor legt die Schule inkl. Standard-Katalog (16 Techniken, 8 Schwerpunkte, 3 leere Dashboard-Sections) an:
+Ein Aufruf im SQL-Editor legt die Schule inkl. Basis-Kurs (Standard-Katalog: 16 Techniken, 8 Schwerpunkte) und 3 leere Dashboard-Sections an. Der Basis-Kurs ist gleich der aktive Kurs.
 
 ```sql
 select bootstrap_school('kiel', 'Kiel');
 -- oder
 select bootstrap_school('hamburg', 'Hamburg');
 ```
+
+Weitere Kurse legen Trainer direkt in der App an (Kurs-Dropdown im Header → „+ Kurs") — dabei kopiert `bootstrap_course(...)` den Standard-Katalog in den neuen Kurs, der dann angepasst werden kann.
 
 Danach jeden Trainer der neuen Schule anlegen:
 
@@ -65,7 +67,13 @@ values (
 
 ## Migration bestehender Kiel-Datenbank
 
-Das ursprüngliche Kiel-Setup war Single-Tenant. Um es auf Multi-Tenant hochzuziehen, im SQL-Editor der bestehenden DB `schema-multitenant-migration.sql` einmal komplett laufen lassen. Es legt die neue Struktur an, migriert die bestehenden Daten auf die Schule 'kiel' und übernimmt die zwei bekannten Trainer (SihingHauke, SihingSoenke). Danach sollte die App unverändert weiterlaufen.
+Der Weg auf den aktuellen Stand geht in Etappen — im SQL-Editor der bestehenden DB nacheinander laufen lassen:
+
+1. `schema-multitenant-migration.sql` — Single-Tenant → Multi-Tenant (Kiel als erste Schule).
+2. `schema-add-icon-column.sql` — optionale Emoji-Icons für Kategorien.
+3. `schema-courses-migration.sql` — Kurs-Ebene einführen; legt pro Schule einen Basis-Kurs an und mappt alle bestehenden Techniken, Schwerpunkte und Trainings darauf.
+
+Danach läuft die App unverändert weiter, nur mit dem neuen Kurs-Dropdown im Header.
 
 ## Dateien
 
@@ -73,19 +81,22 @@ Das ursprüngliche Kiel-Setup war Single-Tenant. Um es auf Multi-Tenant hochzuzi
 |------------------------------------|--------------------------------------------------------------------------|
 | `index.html`                       | UI-Grundgerüst (Login-Screen, Tabs, Kategorielisten, Modal)              |
 | `styles.css`                       | Mobile-first Layout, WHKD-Farben (Navy + Gold)                           |
-| `app.js`                           | Auth, Datenabruf, Rendering, Modal-Logik                                 |
+| `app.js`                           | Auth, Datenabruf, Rendering, Modal-Logik, Kurs-Switcher                  |
 | `config.js`                        | Supabase URL + anon key (hier einsetzen)                                 |
-| `schema.sql`                       | Multi-Tenant-Schema für ein frisches Projekt                             |
-| `schema-multitenant-migration.sql` | Migration eines bestehenden Single-Tenant-Projekts auf Multi-Tenant      |
+| `schema.sql`                       | Multi-Tenant + Kurs-Schema für ein frisches Projekt                      |
+| `schema-multitenant-migration.sql` | Migration Single-Tenant → Multi-Tenant                                   |
+| `schema-add-icon-column.sql`       | Migration: optionale Emoji-Icons an Kategorien                           |
+| `schema-courses-migration.sql`     | Migration: Kurs-Ebene innerhalb einer Schule                             |
 
 ## Datenmodell
 
-- `schools` — eine Zeile pro Ortsverband (`slug`, `name`).
+- `schools` — eine Zeile pro Ortsverband (`slug`, `name`, `active_course_id` als geteilter Zeiger auf den aktuell aktiven Kurs).
 - `trainers` — verknüpft `auth.users` mit einer Schule, hält Anzeigenamen und optionale Autorfarbe.
-- `techniques` / `focus_areas` — Kategorien mit `school_id`, uniqueness pro Schule.
-- `entries` — ein Training mit `school_id`, `user_id`, optionalem `comment`, `created_at`.
+- `courses` — Kurse innerhalb einer Schule (`slug`, `name`, optionale `color`); pro Schule gibt es mindestens den Basis-Kurs.
+- `techniques` / `focus_areas` — Kategorien mit `school_id` + `course_id`, uniqueness pro Kurs.
+- `entries` — ein Training mit `school_id`, `course_id`, `user_id`, optionalem `comment`, `created_at`.
 - `entry_techniques` / `entry_focus_areas` — m:n-Verknüpfungen.
-- `sections` — pro Schule drei Dashboard-Slots (Notizen, Events, Prüflinge).
-- `technique_stats` / `focus_area_stats` — Views mit Häufigkeit, jeweils inkl. `school_id`.
+- `sections` — pro Schule drei Dashboard-Slots (Notizen, Events, Prüflinge); nicht kurs-gescopt.
+- `technique_stats` / `focus_area_stats` — Views mit Häufigkeit, jeweils inkl. `school_id` und `course_id`.
 
-RLS filtert jede Tabelle über den Helper `my_school_id()` (der wiederum in `trainers` nachschlägt). Neue Zeilen bekommen `school_id` per Before-Insert-Trigger automatisch aus der aktuellen Session — der Client muss das Feld nicht mitschicken.
+RLS filtert jede Tabelle über den Helper `my_school_id()` (der wiederum in `trainers` nachschlägt). Neue `techniques`/`focus_areas`/`entries`-Zeilen bekommen ihre `school_id` per Before-Insert-Trigger automatisch aus der `course_id` — der Client schickt nur `course_id` (und ggf. `user_id`).

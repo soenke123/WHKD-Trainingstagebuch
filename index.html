@@ -44,14 +44,31 @@
     </div>
 
     <header class="topbar">
-      <h1 class="brand">
-        <span class="brand-mark">WHKD</span>
-        <span class="brand-sep" aria-hidden="true" hidden>·</span>
-        <span class="brand-school" hidden></span>
-        <span class="brand-title">Trainingstagebuch</span>
-      </h1>
+      <div class="topbar-brand">
+        <h1 class="brand">
+          <span class="brand-mark">WHKD</span>
+          <span class="brand-sep" aria-hidden="true" hidden>·</span>
+          <span class="brand-school" hidden></span>
+          <span class="brand-title">Trainingstagebuch</span>
+        </h1>
+        <button id="course-switcher" class="course-switcher" type="button"
+                aria-haspopup="menu" aria-expanded="false" hidden>
+          <span class="course-dot" aria-hidden="true"></span>
+          <span class="course-name">Basis</span>
+          <i data-lucide="chevron-down" aria-hidden="true"></i>
+        </button>
+      </div>
       <button id="logout-btn" class="btn-ghost" title="Abmelden">Logout</button>
     </header>
+
+    <!-- Popover-Menü unter dem Kurs-Switcher -->
+    <div id="course-menu" class="course-menu" role="menu" hidden>
+      <ul id="course-list" class="course-list"></ul>
+      <button id="course-add-btn" type="button" class="course-add">
+        <span class="course-add-plus" aria-hidden="true">+</span>
+        <span>Kurs</span>
+      </button>
+    </div>
 
     <nav class="tabs" role="tablist">
       <button class="tab is-active" role="tab" aria-selected="true"  data-tab="tagebuch">Tagebuch</button>
@@ -214,6 +231,27 @@
       <footer class="modal-foot">
         <button type="button" class="btn-ghost" data-cat-close>Abbrechen</button>
         <button type="button" id="category-save" class="btn-primary">Hinzufügen</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ─── Modal: neuen Kurs anlegen ──────────────────────────────────── -->
+  <div id="course-modal" class="modal category-modal" hidden>
+    <div class="modal-backdrop" data-course-close></div>
+    <div class="modal-sheet category-sheet" role="dialog" aria-modal="true" aria-labelledby="course-modal-title">
+      <header class="modal-head">
+        <h2 id="course-modal-title">Neuer Kurs</h2>
+        <button class="btn-ghost" data-course-close aria-label="Schließen">✕</button>
+      </header>
+      <div class="modal-body">
+        <input type="text" id="course-name-input" class="cat-name-input" placeholder="Kursname" maxlength="40" />
+        <p class="cat-hint">Farbe für den Header — schnelles Erkennen, welcher Kurs gerade aktiv ist.</p>
+        <div id="course-color-picks" class="course-color-picks" role="listbox" aria-label="Kursfarbe"></div>
+        <p id="course-error" class="error" hidden></p>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn-ghost" data-course-close>Abbrechen</button>
+        <button type="button" id="course-save" class="btn-primary">Anlegen</button>
       </footer>
     </div>
   </div>

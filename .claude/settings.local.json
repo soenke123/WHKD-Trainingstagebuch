@@ -4,7 +4,10 @@
       "WebFetch(domain:www.whkd-kung-fu-kiel.de)",
       "Bash(python *)",
       "PowerShell(gen *)",
-      "Bash(node --check \"C:/Users/snke/OneDrive/ClaudeProjekte/whkd trainingstagebuch/app.js\")"
+      "Bash(node --check \"C:/Users/snke/OneDrive/ClaudeProjekte/whkd trainingstagebuch/app.js\")",
+      "Bash(curl *)",
+      "Bash(npx --yes serve -l 8000 .)",
+      "Bash(node --check -)"
     ]
   }
 }

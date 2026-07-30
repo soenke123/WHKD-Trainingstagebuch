@@ -1,10 +1,12 @@
--- WHKD Trainingstagebuch — Supabase Schema (Multi-Tenant)
+-- WHKD Trainingstagebuch — Supabase Schema (Multi-Tenant + Kurse)
 -- Einmal komplett im Supabase SQL-Editor eines frischen Projekts ausführen.
--- Jede Schule (Ortsverband) hat isolierte Techniken, Schwerpunkte, Einträge
--- und Dashboard-Sections. Neue Schulen per `select bootstrap_school(...)`.
+-- Jede Schule (Ortsverband) hat isolierte Kurse; jeder Kurs hat isolierte
+-- Techniken, Schwerpunkte und Trainings. Dashboard-Sections sind schul-weit.
+-- Neue Schulen per `select bootstrap_school(...)`.
 --
 -- Für bestehende Kiel-Datenbanken NICHT diese Datei laufen lassen — siehe
--- `schema-multitenant-migration.sql`.
+-- `schema-multitenant-migration.sql` (für Single→Multi-Tenant) und
+-- `schema-courses-migration.sql` (für den Kurs-Sprung).
 
 -- ─── Schulen + Trainer ─────────────────────────────────────────────────────
 
@@ -12,6 +14,7 @@ create table schools (
   id bigserial primary key,
   slug text not null unique,      -- URL-freundlich, z.B. 'kiel'
   name text not null,             -- Anzeigename im Header, z.B. 'Kiel'
+  active_course_id bigint,        -- FK folgt weiter unten (courses existiert noch nicht)
   created_at timestamptz default now()
 );
 
@@ -34,36 +37,62 @@ language sql stable security definer set search_path = public as $$
   select school_id from trainers where user_id = auth.uid()
 $$;
 
--- ─── Fach-Tabellen (alle school-gescopt) ───────────────────────────────────
+-- ─── Kurse ─────────────────────────────────────────────────────────────────
+
+create table courses (
+  id bigserial primary key,
+  school_id bigint not null references schools(id) on delete cascade,
+  slug text not null,             -- z.B. 'basis', 'kickboxen'
+  name text not null,             -- Anzeigename, z.B. 'Basis'
+  color text,                     -- optionaler Hex-Wert für Header-Farbe
+  created_at timestamptz default now(),
+  unique (school_id, slug)
+);
+create index courses_school_idx on courses (school_id);
+
+-- FK von schools.active_course_id → courses.id nachziehen (jetzt existiert
+-- die Zieltabelle). ON DELETE SET NULL, damit ein gelöschter Kurs den Zeiger
+-- nur räumt, statt die Schule mitzureißen.
+alter table schools
+  add constraint schools_active_course_fk
+  foreign key (active_course_id) references courses(id) on delete set null;
+
+-- ─── Fach-Tabellen (alle course-gescopt, school_id als Cache) ─────────────
 
 create table techniques (
   id bigserial primary key,
   school_id bigint not null references schools(id) on delete cascade,
+  course_id bigint not null references courses(id) on delete cascade,
   name text not null,
   icon text,                       -- optionales Emoji; wenn leer → Lucide-Fallback
   created_at timestamptz default now(),
-  unique (school_id, name)
+  unique (course_id, name)
 );
 create index techniques_school_idx on techniques (school_id);
+create index techniques_course_idx on techniques (course_id);
 
 create table focus_areas (
   id bigserial primary key,
   school_id bigint not null references schools(id) on delete cascade,
+  course_id bigint not null references courses(id) on delete cascade,
   name text not null,
   icon text,                       -- optionales Emoji; wenn leer → Lucide-Fallback
   created_at timestamptz default now(),
-  unique (school_id, name)
+  unique (course_id, name)
 );
 create index focus_areas_school_idx on focus_areas (school_id);
+create index focus_areas_course_idx on focus_areas (course_id);
 
 create table entries (
   id uuid primary key default gen_random_uuid(),
   school_id bigint not null references schools(id) on delete cascade,
+  course_id bigint not null references courses(id) on delete cascade,
   user_id uuid not null references auth.users(id),
   comment text,
   created_at timestamptz default now()
 );
 create index entries_school_created_at_idx on entries (school_id, created_at desc);
+create index entries_course_created_at_idx on entries (course_id, created_at desc);
 
 create table entry_techniques (
   entry_id uuid references entries(id) on delete cascade,
@@ -78,8 +107,7 @@ create table entry_focus_areas (
 );
 
 -- Genau drei Dashboard-Slots pro Schule (Notizen, Events, Prüflinge).
--- Titel ist frei umbenennbar, Inhalt ist sanitized HTML mit optionalen
--- data-author-Attributen auf Top-Level-Blöcken (siehe app.js).
+-- Dashboard bleibt schul-weit geteilt — kein course_id.
 create table sections (
   school_id bigint not null references schools(id) on delete cascade,
   slot int not null check (slot in (1, 2, 3)),
@@ -90,26 +118,24 @@ create table sections (
   primary key (school_id, slot)
 );
 
--- ─── Trigger: school_id beim Insert automatisch setzen ─────────────────────
--- Damit der Client kein school_id mitschicken muss. RLS würde einen falschen
--- Wert ohnehin ablehnen, der Trigger sorgt für den Default und läuft VOR
--- der RLS-Prüfung.
+-- ─── Trigger: school_id automatisch aus course_id ableiten ────────────────
+-- Client schickt nur course_id, school_id folgt. Läuft vor RLS.
 
-create or replace function set_school_id_from_auth() returns trigger
+create or replace function set_school_id_from_course() returns trigger
 language plpgsql as $$
 begin
-  if new.school_id is null then
-    new.school_id := my_school_id();
+  if new.school_id is null and new.course_id is not null then
+    select school_id into new.school_id from courses where id = new.course_id;
   end if;
   return new;
 end $$;
 
-create trigger set_school_id before insert on techniques
-  for each row execute function set_school_id_from_auth();
-create trigger set_school_id before insert on focus_areas
-  for each row execute function set_school_id_from_auth();
-create trigger set_school_id before insert on entries
-  for each row execute function set_school_id_from_auth();
+create trigger set_school_id_from_course before insert on techniques
+  for each row execute function set_school_id_from_course();
+create trigger set_school_id_from_course before insert on focus_areas
+  for each row execute function set_school_id_from_course();
+create trigger set_school_id_from_course before insert on entries
+  for each row execute function set_school_id_from_course();
 
 -- ─── Views für Häufigkeitszahlen ────────────────────────────────────────────
 -- `security_invoker = true` sorgt dafür, dass die RLS-Policies der Basis-
@@ -118,43 +144,87 @@ create trigger set_school_id before insert on entries
 
 create view technique_stats
 with (security_invoker = true) as
-  select t.id, t.school_id, t.name, t.icon,
+  select t.id, t.school_id, t.course_id, t.name, t.icon,
          count(et.entry_id)::int as usage_count,
          max(e.created_at)       as last_used_at
   from techniques t
   left join entry_techniques et on et.technique_id = t.id
   left join entries e            on e.id = et.entry_id
-  group by t.id, t.school_id, t.name, t.icon;
+  group by t.id, t.school_id, t.course_id, t.name, t.icon;
 
 create view focus_area_stats
 with (security_invoker = true) as
-  select f.id, f.school_id, f.name, f.icon,
+  select f.id, f.school_id, f.course_id, f.name, f.icon,
          count(ef.entry_id)::int as usage_count,
          max(e.created_at)       as last_used_at
   from focus_areas f
   left join entry_focus_areas ef on ef.focus_area_id = f.id
   left join entries e            on e.id = ef.entry_id
-  group by f.id, f.school_id, f.name, f.icon;
+  group by f.id, f.school_id, f.course_id, f.name, f.icon;
 
--- ─── bootstrap_school: neue Schule + Standard-Katalog + leere Sections ────
--- Aufruf im SQL-Editor: `select bootstrap_school('hamburg', 'Hamburg');`
+-- ─── bootstrap_course: neuen Kurs + Standard-Katalog anlegen ──────────────
+-- Aus dem Client per `supa.rpc('bootstrap_course', {...})` aufrufen. Sicher
+-- gemacht durch expliziten Vergleich mit `my_school_id()`.
 
-create or replace function bootstrap_school(p_slug text, p_name text)
-returns bigint language plpgsql as $$
+create or replace function bootstrap_course(
+  p_school_id bigint,
+  p_slug text,
+  p_name text,
+  p_color text default null
+) returns bigint language plpgsql
+security definer set search_path = public as $$
 declare new_id bigint;
 begin
-  insert into schools (slug, name) values (p_slug, p_name) returning id into new_id;
+  if p_school_id is distinct from my_school_id() then
+    raise exception 'Kein Zugriff auf diese Schule';
+  end if;
 
-  insert into techniques (school_id, name)
-    select new_id, n from unnest(array[
+  insert into courses (school_id, slug, name, color)
+    values (p_school_id, p_slug, p_name, p_color)
+    returning id into new_id;
+
+  insert into techniques (school_id, course_id, name)
+    select p_school_id, new_id, n from unnest(array[
       'Basis', 'Tabellen', 'Handkombinationen', 'Trittkombinationen',
       'Offensiv Setups', 'Defensiv Setups', 'Würfe', 'Chin-Na Techniken',
       'Falltritte', 'Greifkonter', 'Schlagkonter', 'Trittkonter',
       'Messerkonter', 'Stockkonter', 'Waffentraining', 'Escrima'
     ]) as n;
 
-  insert into focus_areas (school_id, name)
-    select new_id, n from unnest(array[
+  insert into focus_areas (school_id, course_id, name)
+    select p_school_id, new_id, n from unnest(array[
+      'Beine', 'Arme', 'Rumpf', 'Kondition', 'Kraft',
+      'Pratze/Airbag', 'Multiman', 'Todmachertraining'
+    ]) as n;
+
+  return new_id;
+end $$;
+
+-- ─── bootstrap_school: neue Schule + Basis-Kurs + Dashboard-Slots ─────────
+-- Aufruf im SQL-Editor: `select bootstrap_school('hamburg', 'Hamburg');`
+
+create or replace function bootstrap_school(p_slug text, p_name text)
+returns bigint language plpgsql as $$
+declare new_id bigint; new_course_id bigint;
+begin
+  insert into schools (slug, name) values (p_slug, p_name) returning id into new_id;
+
+  insert into courses (school_id, slug, name)
+    values (new_id, 'basis', 'Basis')
+    returning id into new_course_id;
+
+  update schools set active_course_id = new_course_id where id = new_id;
+
+  insert into techniques (school_id, course_id, name)
+    select new_id, new_course_id, n from unnest(array[
+      'Basis', 'Tabellen', 'Handkombinationen', 'Trittkombinationen',
+      'Offensiv Setups', 'Defensiv Setups', 'Würfe', 'Chin-Na Techniken',
+      'Falltritte', 'Greifkonter', 'Schlagkonter', 'Trittkonter',
+      'Messerkonter', 'Stockkonter', 'Waffentraining', 'Escrima'
+    ]) as n;
+
+  insert into focus_areas (school_id, course_id, name)
+    select new_id, new_course_id, n from unnest(array[
       'Beine', 'Arme', 'Rumpf', 'Kondition', 'Kraft',
       'Pratze/Airbag', 'Multiman', 'Todmachertraining'
     ]) as n;
@@ -171,6 +241,7 @@ end $$;
 
 alter table schools           enable row level security;
 alter table trainers          enable row level security;
+alter table courses           enable row level security;
 alter table techniques        enable row level security;
 alter table focus_areas       enable row level security;
 alter table entries           enable row level security;
@@ -178,13 +249,25 @@ alter table entry_techniques  enable row level security;
 alter table entry_focus_areas enable row level security;
 alter table sections          enable row level security;
 
--- schools: nur die eigene Schule sichtbar
+-- schools: nur die eigene Schule sichtbar; Update erlaubt (für active_course_id)
 create policy school_read on schools
   for select to authenticated using (id = my_school_id());
+create policy school_update on schools
+  for update to authenticated
+  using (id = my_school_id())
+  with check (id = my_school_id());
 
 -- trainers: Kollegen der eigenen Schule sichtbar
 create policy school_read on trainers
   for select to authenticated using (school_id = my_school_id());
+
+-- courses
+create policy school_read on courses
+  for select to authenticated using (school_id = my_school_id());
+create policy school_insert on courses
+  for insert to authenticated with check (school_id = my_school_id());
+create policy school_delete on courses
+  for delete to authenticated using (school_id = my_school_id());
 
 -- techniques
 create policy school_read on techniques
