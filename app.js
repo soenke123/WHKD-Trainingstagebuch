@@ -399,18 +399,16 @@ async function refresh() {
 
 // Falls die icon-Migration in der DB noch nicht gelaufen ist, existiert die
 // Spalte in den Stats-Views nicht — dann würde die ganze Query fehlschlagen
-// und die Tagebuchansicht bliebe leer. In dem Fall einmal ohne `icon` retryen.
+// und die Tagebuchansicht bliebe leer. Bei jedem Fehler einmal ohne `icon`
+// nachladen; die App bleibt dadurch auch ohne Migration nutzbar.
 async function fetchStatsWithIconFallback(view) {
   const withIcon = await supa.from(view)
     .select("id, name, icon, usage_count, last_used_at");
   if (!withIcon.error) return withIcon;
 
-  const msg = (withIcon.error.message || "").toLowerCase();
-  const looksLikeMissingColumn = msg.includes("icon") || withIcon.error.code === "42703";
-  if (!looksLikeMissingColumn) return withIcon;
-
   console.warn(
-    `View "${view}" ohne icon-Spalte — schema-add-icon-column.sql noch nicht ausgeführt?`
+    `View "${view}" nicht mit icon abfragbar (${withIcon.error.message}) — retry ohne icon. `
+    + `Führe schema-add-icon-column.sql im Supabase-SQL-Editor aus.`
   );
   return supa.from(view).select("id, name, usage_count, last_used_at");
 }
