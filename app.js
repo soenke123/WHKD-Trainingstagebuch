@@ -46,6 +46,10 @@ function iconFor(kind, name) {
   return map[name] || "circle";
 }
 
+function refreshIcons() {
+  if (window.lucide) window.lucide.createIcons();
+}
+
 // Rendert entweder das gespeicherte Emoji (User-Kategorie) oder den passenden
 // Lucide-Fallback (Default-Kategorie). Emoji werden in <span> gesetzt, damit
 // sich User-erstellte Kategorien optisch klar von den Standardeinträgen
