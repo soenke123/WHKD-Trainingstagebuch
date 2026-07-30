@@ -361,8 +361,8 @@ el.tabButtons.forEach((btn) => {
 
 async function refresh() {
   const [techRes, focusRes, entryRes, secRes, trainerRes] = await Promise.all([
-    supa.from("technique_stats").select("id, name, icon, usage_count, last_used_at"),
-    supa.from("focus_area_stats").select("id, name, icon, usage_count, last_used_at"),
+    fetchStatsWithIconFallback("technique_stats"),
+    fetchStatsWithIconFallback("focus_area_stats"),
     supa.from("entries")
       .select("id, comment, created_at, user_id, entry_techniques(technique_id), entry_focus_areas(focus_area_id)")
       .order("created_at", { ascending: false })
@@ -392,6 +392,24 @@ async function refresh() {
   renderHistory();
   renderDashboard();
   refreshIcons();
+}
+
+// Falls die icon-Migration in der DB noch nicht gelaufen ist, existiert die
+// Spalte in den Stats-Views nicht — dann würde die ganze Query fehlschlagen
+// und die Tagebuchansicht bliebe leer. In dem Fall einmal ohne `icon` retryen.
+async function fetchStatsWithIconFallback(view) {
+  const withIcon = await supa.from(view)
+    .select("id, name, icon, usage_count, last_used_at");
+  if (!withIcon.error) return withIcon;
+
+  const msg = (withIcon.error.message || "").toLowerCase();
+  const looksLikeMissingColumn = msg.includes("icon") || withIcon.error.code === "42703";
+  if (!looksLikeMissingColumn) return withIcon;
+
+  console.warn(
+    `View "${view}" ohne icon-Spalte — schema-add-icon-column.sql noch nicht ausgeführt?`
+  );
+  return supa.from(view).select("id, name, usage_count, last_used_at");
 }
 
 function sortStats(rows) {
